@@ -88,62 +88,94 @@ def parse_lfn(entries):
     full_name = clean_filename("".join(name_parts))
     return full_name
 
-def read_directory_entries(device, boot_sector):
-    """ Đọc Root Directory Entries (RDET) của FAT32 """
+def get_next_cluster(device, fat_offset, current_cluster, bytes_per_sector):
+    """ Tìm cluster kế tiếp từ bảng FAT """
+    if current_cluster < 2:  # FAT32 bỏ qua cluster 0 và 1
+        print(f"❌ Lỗi: Cluster {current_cluster} không hợp lệ!")
+        return None
+
+    fat_entry_offset = fat_offset + (current_cluster * 4)  # Mỗi FAT entry có 4 byte
+
+    try:
+        with open(device, "rb") as disk:
+            disk.seek(fat_entry_offset)
+            fat_entry = disk.read(4)
+            if len(fat_entry) < 4:
+                return None
+            
+            next_cluster = int.from_bytes(fat_entry, "little") & 0x0FFFFFFF  
+
+            # Nếu cluster là giá trị EOF, không có cluster tiếp theo
+            if next_cluster >= 0x0FFFFFF8:
+                return None
+            return next_cluster
+
+    except Exception as e:
+        # print(f"❌ Lỗi khi đọc FAT cluster {current_cluster}: {e}")
+        return None
+
+
+
+def read_directory(device, boot_sector, first_cluster):
+    """ Đọc tất cả file trong một thư mục bằng cách duyệt hết các cluster """
     bytes_per_sector = read_little_endian(boot_sector, 0x0B, 2)
     sectors_per_cluster = read_little_endian(boot_sector, 0x0D, 1)
     reserved_sectors = read_little_endian(boot_sector, 0x0E, 2)
     number_of_fats = read_little_endian(boot_sector, 0x10, 1)
     sectors_per_fat = read_little_endian(boot_sector, 0x24, 4)
-    root_cluster = read_little_endian(boot_sector, 0x2C, 4)
-
-    # Tính toán vị trí của Root Directory
+    fat_offset = reserved_sectors * bytes_per_sector
     first_data_sector = reserved_sectors + (number_of_fats * sectors_per_fat)
-    root_directory_sector = first_data_sector + ((root_cluster - 2) * sectors_per_cluster)
-    root_directory_offset = root_directory_sector * bytes_per_sector
+    entries = []
 
-    try:
-        with open(device, "rb") as disk:
-            disk.seek(root_directory_offset)
-            data = disk.read(sectors_per_cluster * bytes_per_sector)
+    current_cluster = first_cluster
+    while current_cluster:
+        directory_sector = first_data_sector + ((current_cluster - 2) * sectors_per_cluster)
+        directory_offset = directory_sector * bytes_per_sector
 
-            entries = []
-            lfn_entries = []
-            for i in range(0, len(data), 32):
-                entry = data[i:i+32]
-                if entry[0] == 0x00:
-                    break  # Entry trống -> kết thúc
-                if entry[0] == 0xE5:
-                    continue  # Entry đã bị xóa
-                
-                attr = entry[11]
-                if attr == 0x0F:
-                    lfn_entries.append(entry)  # Entry phụ (LFN)
-                else:
-                    name = parse_short_name(entry)
-                    if lfn_entries:
-                        name = parse_lfn(lfn_entries)  # Ghép tên dài
-                        lfn_entries = []  # Reset danh sách entry phụ
+        try:
+            with open(device, "rb") as disk:
+                disk.seek(directory_offset)
+                data = disk.read(sectors_per_cluster * bytes_per_sector)
 
-                    first_cluster = (entry[26] + (entry[27] << 8)) + ((entry[20] + (entry[21] << 8)) << 16)
-                    size = read_little_endian(entry, 28, 4)
-                    entry_type = "Folder" if attr & 0x10 else "File"
+                lfn_entries = []
+                for i in range(0, len(data), 32):
+                    entry = data[i:i+32]
+                    if entry[0] == 0x00:
+                        break  # Entry trống -> kết thúc
+                    if entry[0] == 0xE5:
+                        continue  # Entry đã bị xóa
 
-                    entries.append({
-                        "Name": name,
-                        "Type": entry_type,
-                        "First Cluster": first_cluster,
-                        "Size": size if entry_type == "File" else "-"
-                    })
+                    attr = entry[11]
+                    if attr == 0x0F:
+                        lfn_entries.append(entry)  # Entry phụ (LFN)
+                    else:
+                        name = parse_short_name(entry)
+                        if lfn_entries:
+                            name = parse_lfn(lfn_entries)  # Ghép tên dài
+                            lfn_entries = []  # Reset danh sách entry phụ
+
+                        first_cluster = (entry[26] + (entry[27] << 8)) + ((entry[20] + (entry[21] << 8)) << 16)
+                        size = read_little_endian(entry, 28, 4)
+                        entry_type = "Folder" if attr & 0x10 else "File"
+
+                        entries.append({
+                            "Name": name,
+                            "Type": entry_type,
+                            "First Cluster": first_cluster,
+                            "Size": size if entry_type == "File" else "-"
+                        })
             
-            return entries
+        except PermissionError:
+            print("❌ Không đủ quyền truy cập! Hãy chạy bằng quyền Administrator.")
+            exit()
+        except FileNotFoundError:
+            print("❌ Ổ đĩa không tồn tại hoặc không thể truy cập.")
+            exit()
+        
+        current_cluster = get_next_cluster(device, fat_offset, current_cluster, bytes_per_sector)
+    
+    return entries
 
-    except PermissionError:
-        print("❌ Không đủ quyền truy cập! Hãy chạy bằng quyền Administrator.")
-        exit()
-    except FileNotFoundError:
-        print("❌ Ổ đĩa không tồn tại hoặc không thể truy cập.")
-        exit()
 
 def main():
     device = get_device()
@@ -152,14 +184,18 @@ def main():
 
     if filesystem == "FAT32":
         print("✅ Detected File System: FAT32")
-        entries = read_directory_entries(device, boot_sector)
+        root_entries = read_directory(device, boot_sector, read_little_endian(boot_sector, 0x2C, 4))
 
         for data in read_fat32_info(boot_sector).items():
             print(f"🔹 {data[0]}: {data[1]}")
 
         print("\n📂 Root Directory Entries:")
-        for entry in entries:
+        for entry in root_entries:
             print(f"📌 {entry['Name']} | {entry['Type']} | First Cluster: {entry['First Cluster']} | Size: {entry['Size']} bytes")
+            if entry['Type'] == "Folder":
+                sub_entries = read_directory(device, boot_sector, entry['First Cluster'])
+                for sub in sub_entries:
+                    print(f"   ↳ {sub['Name']} | {sub['Type']} | First Cluster: {sub['First Cluster']} | Size: {sub['Size']} bytes")
     else:
         print("❌ Unknown File System")
 
