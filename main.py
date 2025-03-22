@@ -1,3 +1,4 @@
+
 def get_device():
     """ Cho phép người dùng nhập ký tự ổ đĩa (Windows) hoặc đường dẫn thiết bị (Linux) """
     while True:
@@ -121,7 +122,9 @@ def read_tree(device, boot_sector, first_cluster, indent=""):
     """
     entries = read_directory(device, boot_sector, first_cluster)
     for entry in entries:
-        print(f"{indent}📌 {entry['Name']} | {entry['Type']} | Cluster: {entry['First Cluster']} | Size: {entry['Size']}")
+        icon = "📁" if entry['Type'] == "Folder" else "📄"
+
+        print(f"{indent} {icon} {entry['Name']} | {entry['Type']} | Cluster: {entry['First Cluster']} | Size: {entry['Size']}")
 
         # Kiểm tra nếu là Folder và không phải '.' hay '..' để tránh vòng lặp vô hạn
         if entry['Type'] == "Folder" and entry['Name'] not in [".", ".."]:
@@ -211,7 +214,6 @@ def main():
 
     elif filesystem == "NTFS":
         print("✅ Detected File System: NTFS")
-        # ... code xử lý NTFS ...
     else:
         print("❌ Unknown File System")
 
