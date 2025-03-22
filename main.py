@@ -114,6 +114,18 @@ def get_next_cluster(device, fat_offset, current_cluster, bytes_per_sector):
         # print(f"❌ Lỗi khi đọc FAT cluster {current_cluster}: {e}")
         return None
 
+def read_tree(device, boot_sector, first_cluster, indent=""):
+    """
+    Đọc đệ quy toàn bộ cây thư mục bắt đầu từ 'first_cluster'.
+    'indent' là chuỗi để thụt lề khi in (giúp hiển thị cấu trúc cây).
+    """
+    entries = read_directory(device, boot_sector, first_cluster)
+    for entry in entries:
+        print(f"{indent}📌 {entry['Name']} | {entry['Type']} | Cluster: {entry['First Cluster']} | Size: {entry['Size']}")
+
+        # Kiểm tra nếu là Folder và không phải '.' hay '..' để tránh vòng lặp vô hạn
+        if entry['Type'] == "Folder" and entry['Name'] not in [".", ".."]:
+            read_tree(device, boot_sector, entry['First Cluster'], indent + "   ")
 
 
 def read_directory(device, boot_sector, first_cluster):
@@ -184,18 +196,22 @@ def main():
 
     if filesystem == "FAT32":
         print("✅ Detected File System: FAT32")
-        root_entries = read_directory(device, boot_sector, read_little_endian(boot_sector, 0x2C, 4))
 
-        for data in read_fat32_info(boot_sector).items():
-            print(f"🔹 {data[0]}: {data[1]}")
+        # In thông tin FAT32
+        fat32_info = read_fat32_info(boot_sector)
+        for k, v in fat32_info.items():
+            print(f"🔹 {k}: {v}")
 
-        print("\n📂 Root Directory Entries:")
-        for entry in root_entries:
-            print(f"📌 {entry['Name']} | {entry['Type']} | First Cluster: {entry['First Cluster']} | Size: {entry['Size']} bytes")
-            if entry['Type'] == "Folder":
-                sub_entries = read_directory(device, boot_sector, entry['First Cluster'])
-                for sub in sub_entries:
-                    print(f"   ↳ {sub['Name']} | {sub['Type']} | First Cluster: {sub['First Cluster']} | Size: {sub['Size']} bytes")
+        # Lấy Root Cluster Index từ Boot Sector
+        root_cluster = fat32_info["Root Cluster Index"]
+
+        print("\n📂 Directory Tree (FAT32):")
+        # Đọc toàn bộ cây thư mục
+        read_tree(device, boot_sector, root_cluster)
+
+    elif filesystem == "NTFS":
+        print("✅ Detected File System: NTFS")
+        # ... code xử lý NTFS ...
     else:
         print("❌ Unknown File System")
 
