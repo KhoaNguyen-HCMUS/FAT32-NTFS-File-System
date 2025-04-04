@@ -253,6 +253,63 @@ class FAT32Reader(FileSystemReader):
 
         return file_data
 
+    def menu_fat32(fat32_reader, device, boot_sector, current_cluster):
+        """
+        Menu system for navigating FAT32 directories and reading files.
+        - fat32_reader: Instance of FAT32Reader
+        - device: Path to the device
+        - boot_sector: Boot sector data
+        - current_cluster: Current directory cluster
+        """
+        parent_cluster = None  # To track the parent directory for ".."
+
+        while True:
+            # Read the current directory
+            entries = fat32_reader.read_directory(device, boot_sector, current_cluster)
+            print("\n📂 Current Directory:")
+            for entry in entries:
+                icon = "📁" if entry["Type"] == "Folder" else "📄"
+                print(f"  {icon} {entry['Name']}")
+
+            # Prompt user for input
+            user_input = input("\nEnter the name of a file or directory (or '..' to go back): ").strip()
+
+            if user_input == "..":
+                if parent_cluster is None:
+                    print("❌ You are already at the root directory.")
+                else:
+                    # Go back to the parent directory
+                    current_cluster, parent_cluster = parent_cluster, None
+            else:
+                # Search for the file or directory
+                found_entry = None
+                for entry in entries:
+                    if entry["Name"].lower() == user_input.lower():
+                        found_entry = entry
+                        break
+
+                if found_entry:
+                    if found_entry["Type"] == "File":
+                        # Handle file
+                        if found_entry["Name"].endswith(".txt") or found_entry["Name"].endswith(".TXT"):
+                            # Read and display the content of the .txt file
+                            file_data = fat32_reader.read_file_content(
+                                device, boot_sector, found_entry["First Cluster"], found_entry["Size"]
+                            )
+                            print("\n📄 File Content:\n")
+                            print(file_data.decode("utf-8", errors="replace"))
+                        else:
+                            print(f"❌ Cannot read file '{found_entry['Name']}'. Only .txt files are supported.")
+                    elif found_entry["Type"] == "Folder":
+                        # Navigate into the directory
+                        parent_cluster = current_cluster
+                        current_cluster = found_entry["First Cluster"]
+                    else:
+                        print(f"❌ Unknown entry type for '{found_entry['Name']}'.")
+                else:
+                    print(f"❌ '{user_input}' not found in the current directory.")
+
+
 
 class NTFSReader(FileSystemReader):
     def __init__(self, device):
@@ -467,6 +524,56 @@ class NTFSReader(FileSystemReader):
 
             return file_data
 
+    def menu_ntfs(self, device, ntfs_info, current_node):
+        """
+        Menu system for navigating NTFS directories and reading files.
+        - device: Path to the device
+        - ntfs_info: NTFS boot sector information
+        - current_node: Current directory node
+        """
+        parent_stack = []  # Stack to track parent directories
+
+        while True:
+            # Display the current directory
+            print("\n📂 Current Directory:")
+            for child in current_node["children"]:
+                icon = "📁" if child["is_directory"] else "📄"
+                print(f"  {icon} {child['name']}")
+
+            # Prompt user for input
+            user_input = input("\nEnter the name of a file or directory (or '..' to go back): ").strip()
+
+            if user_input == "..":
+                if not parent_stack:
+                    print("❌ You are already at the root directory.")
+                else:
+                    # Go back to the parent directory
+                    current_node = parent_stack.pop()
+            else:
+                # Search for the file or directory
+                found_entry = None
+                for child in current_node["children"]:
+                    if child["name"].lower() == user_input.lower():
+                        found_entry = child
+                        break
+
+                if found_entry:
+                    if not found_entry["is_directory"]:
+                        # Handle file
+                        if found_entry["name"].endswith(".txt"):
+                            # Read and display the content of the .txt file
+                            file_data = self.read_file_content(device, ntfs_info, found_entry)
+                            print("\n📄 File Content:\n")
+                            print(file_data.decode("utf-8", errors="replace"))
+                        else:
+                            print(f"❌ Cannot read file '{found_entry['name']}'. Only .txt files are supported.")
+                    else:
+                        # Navigate into the directory
+                        parent_stack.append(current_node)
+                        current_node = found_entry
+                else:
+                    print(f"❌ '{user_input}' not found in the current directory.")
+
 
 def main():
     device = DiskManager.get_device()
@@ -489,22 +596,7 @@ def main():
         # Lấy Root Cluster Index từ Boot Sector
         root_cluster = fat32_info["Root Cluster Index"]
 
-        print("\n📂 Directory Tree (FAT32):")
-        # Đọc toàn bộ cây thư mục
-        fat32_reader.read_tree(device, boot_sector, root_cluster)
-
-        file_name = input("\nEnter the name of the file to read: ").strip()
-        file_entry = fat32_reader.search_file_in_fat32(device, boot_sector, root_cluster, file_name)
-
-        if file_entry:
-            # File found, read its content
-            file_data = fat32_reader.read_file_content(
-                device, boot_sector, file_entry["First Cluster"], file_entry["Size"]
-            )
-            print("\n📄 File Content:\n")
-            print(file_data.decode("utf-8", errors="replace"))
-        else:
-            print(f"❌ File '{file_name}' not found.")
+        FAT32Reader.menu_fat32(fat32_reader, device, boot_sector, root_cluster)
 
     elif filesystem == "NTFS":
         print("✅ Detected File System: NTFS")
@@ -524,18 +616,7 @@ def main():
             print("❌ Không tìm thấy root directory (record #5).")
             exit()
 
-        # In cây thư mục
-        ntfs_reader.print_tree(root)
-            # Prompt user to read a file
-        file_name = input("\nEnter the name of the file to read: ").strip()
-        for record in records.values():
-            if record["name"] == file_name and not record["is_directory"]:
-                file_data = ntfs_reader.read_file_content(device, ntfs_info, record)
-                print("\n📄 File Content:\n")
-                print(file_data.decode("utf-8", errors="replace"))
-                break
-        else:
-            print(f"❌ File '{file_name}' not found.")
+        ntfs_reader.menu_ntfs(device, ntfs_info, root)
     else:
         print("❌ Unknown File System")
 
