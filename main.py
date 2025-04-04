@@ -192,6 +192,66 @@ class FAT32Reader(FileSystemReader):
             current_cluster = self.get_next_cluster(device, fat_offset, current_cluster, bytes_per_sector)
         
         return entries
+    
+    def search_file_in_fat32(self, device, boot_sector, current_cluster, file_name):
+        """
+        Recursively search for a file in all directories starting from the given cluster.
+        - device: Path to the device (e.g., \\.\E:)
+        - boot_sector: Boot sector data
+        - current_cluster: Starting cluster of the directory
+        - file_name: Name of the file to search for
+        """
+        entries = self.read_directory(device, boot_sector, current_cluster)
+        for entry in entries:
+            if entry["Name"] == file_name and entry["Type"] == "File":
+                # File found, return its details
+                return entry
+            elif entry["Type"] == "Folder" and entry["Name"] not in [".", ".."]:
+                # Recursively search in subdirectory
+                result = self.search_file_in_fat32(device, boot_sector, entry["First Cluster"], file_name)
+                if result:
+                    return result
+        return None
+    
+    def read_file_content(self, device, boot_sector, start_cluster, file_size):
+        """
+        Read the content of a file from the FAT32 file system.
+        - device: Path to the device (e.g., \\.\E:)
+        - boot_sector: Boot sector data
+        - start_cluster: Starting cluster of the file
+        - file_size: Size of the file in bytes
+        """
+        fat32_info = self.read_fat32_info(boot_sector)
+        bytes_per_sector = fat32_info["Bytes per Sector"]
+        sectors_per_cluster = fat32_info["Sectors per Cluster"]
+        reserved_sectors = fat32_info["Reserved Sectors"]
+        number_of_fats = fat32_info["Number of FATs"]
+        sectors_per_fat = fat32_info["Sectors per FAT"]
+
+        # Calculate offsets
+        fat_offset = reserved_sectors * bytes_per_sector
+        data_offset = (reserved_sectors + number_of_fats * sectors_per_fat) * bytes_per_sector
+        cluster_size = bytes_per_sector * sectors_per_cluster
+
+        file_data = b""
+        current_cluster = start_cluster
+
+        while current_cluster:
+            # Calculate the offset of the current cluster in the data region
+            cluster_offset = data_offset + (current_cluster - 2) * cluster_size
+            with open(device, "rb") as disk:
+                disk.seek(cluster_offset)
+                data = disk.read(cluster_size)
+                file_data += data
+
+            # Stop reading if the file size has been reached
+            if len(file_data) >= file_size:
+                return file_data[:file_size]
+
+            # Get the next cluster from the FAT table
+            current_cluster = self.get_next_cluster(device, fat_offset, current_cluster, bytes_per_sector)
+
+        return file_data
 
 
 class NTFSReader(FileSystemReader):
@@ -365,6 +425,48 @@ class NTFSReader(FileSystemReader):
         else:
             print(f"❌ Lỗi: Node không phải là dictionary. Loại: {type(node)}")
 
+    def read_file_content(self, device, ntfs_info, mft_record):
+        """
+        Read the content of a file from the NTFS file system.
+        - device: Path to the device (e.g., \\.\E:)
+        - ntfs_info: NTFS boot sector information
+        - mft_record: MFT record of the file
+        """
+        bytes_per_sector = ntfs_info["Bytes per Sector"]
+        sectors_per_cluster = ntfs_info["Sectors per Cluster"]
+
+        # Check if the file is resident or non-resident
+        if mft_record.get("is_resident", False):
+            # Resident data: Content is stored directly in the MFT record
+            file_data = mft_record.get("data", b"")
+            return file_data
+        else:
+            # Non-resident data: Content is stored in clusters on the disk
+            data_runs = mft_record.get("data_runs", [])
+            file_size = mft_record.get("size", 0)
+
+            if not data_runs:
+                print("❌ No data runs found for the file.")
+                return b""
+
+            file_data = b""
+            with open(device, "rb") as disk:
+                for run in data_runs:
+                    # Calculate the offset of the cluster in the data region
+                    cluster_offset = run["start_cluster"] * sectors_per_cluster * bytes_per_sector
+                    cluster_size = run["length"] * sectors_per_cluster * bytes_per_sector
+
+                    # Read the data from the cluster
+                    disk.seek(cluster_offset)
+                    data = disk.read(cluster_size)
+                    file_data += data
+
+                    # Stop reading if the file size has been reached
+                    if len(file_data) >= file_size:
+                        return file_data[:file_size]
+
+            return file_data
+
 
 def main():
     device = DiskManager.get_device()
@@ -391,6 +493,19 @@ def main():
         # Đọc toàn bộ cây thư mục
         fat32_reader.read_tree(device, boot_sector, root_cluster)
 
+        file_name = input("\nEnter the name of the file to read: ").strip()
+        file_entry = fat32_reader.search_file_in_fat32(device, boot_sector, root_cluster, file_name)
+
+        if file_entry:
+            # File found, read its content
+            file_data = fat32_reader.read_file_content(
+                device, boot_sector, file_entry["First Cluster"], file_entry["Size"]
+            )
+            print("\n📄 File Content:\n")
+            print(file_data.decode("utf-8", errors="replace"))
+        else:
+            print(f"❌ File '{file_name}' not found.")
+
     elif filesystem == "NTFS":
         print("✅ Detected File System: NTFS")
 
@@ -399,11 +514,6 @@ def main():
         ntfs_info = ntfs_reader.read_ntfs_info(ntfs_reader.boot_sector)  # Gán giá trị cho ntfs_info
         for k, v in ntfs_info.items():
             print(f"🔹 {k}: {v}")
-
-        # Lấy MFT Cluster Number từ Boot Sector
-        mft_cluster = ntfs_info["MFT Cluster Number"]
-        mft_record_size = ntfs_info["MFT Record Size"]
-        bytes_per_sector = ntfs_info["Bytes per Sector"]
 
         print("\n📂 Directory Tree (NTFS):")
         # Đọc toàn bộ MFT records và xây dựng cây thư mục
@@ -416,6 +526,16 @@ def main():
 
         # In cây thư mục
         ntfs_reader.print_tree(root)
+            # Prompt user to read a file
+        file_name = input("\nEnter the name of the file to read: ").strip()
+        for record in records.values():
+            if record["name"] == file_name and not record["is_directory"]:
+                file_data = ntfs_reader.read_file_content(device, ntfs_info, record)
+                print("\n📄 File Content:\n")
+                print(file_data.decode("utf-8", errors="replace"))
+                break
+        else:
+            print(f"❌ File '{file_name}' not found.")
     else:
         print("❌ Unknown File System")
 
