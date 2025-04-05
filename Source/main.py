@@ -1,6 +1,17 @@
 import sys
+from datetime import datetime, timedelta #For NTFS timestamp parsing
+
 class DiskManager:
-    @staticmethod
+    def count_partitions():
+        import wmi
+        c = wmi.WMI()
+        partitions = c.Win32_LogicalDisk()
+        print("Danh sách phân vùng:")
+        for p in partitions:
+            print(f"Ổ đĩa: {p.DeviceID}, Loại: {p.Description}, Hệ thống tập tin: {p.FileSystem}")
+        print(f"\nTổng số phân vùng: {len(partitions)}")
+
+
     def get_device():
         """ Cho phép người dùng nhập ký tự ổ đĩa (Windows) hoặc đường dẫn thiết bị (Linux) """
         while True:
@@ -89,6 +100,20 @@ class FAT32Reader(FileSystemReader):
         full_name = self.clean_filename("".join(name_parts))
         return full_name
 
+    def parse_date(self, raw_date):
+        """Parse FAT32 date format into a human-readable string."""
+        year = ((raw_date >> 9) & 0x7F) + 1980
+        month = (raw_date >> 5) & 0x0F
+        day = raw_date & 0x1F
+        return f"{year:04d}-{month:02d}-{day:02d}"
+
+    def parse_time(self, raw_time):
+        """Parse FAT32 time format into a human-readable string."""
+        hours = (raw_time >> 11) & 0x1F
+        minutes = (raw_time >> 5) & 0x3F
+        seconds = (raw_time & 0x1F) * 2
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
     def get_next_cluster(self,device, fat_offset, current_cluster, bytes_per_sector):
         """ Tìm cluster kế tiếp từ bảng FAT """
         if current_cluster < 2:  # FAT32 bỏ qua cluster 0 và 1
@@ -114,21 +139,6 @@ class FAT32Reader(FileSystemReader):
         except Exception as e:
             # print(f"❌ Lỗi khi đọc FAT cluster {current_cluster}: {e}")
             return None
-
-    def read_tree(self, device, boot_sector, first_cluster, indent=""):
-        """
-        Đọc đệ quy toàn bộ cây thư mục bắt đầu từ 'first_cluster'.
-        'indent' là chuỗi để thụt lề khi in (giúp hiển thị cấu trúc cây).
-        """
-        entries = self.read_directory(device, boot_sector, first_cluster)
-        for entry in entries:
-            icon = "📁" if entry['Type'] == "Folder" else "📄"
-
-            print(f"{indent} {icon} {entry['Name']} | {entry['Type']} | Cluster: {entry['First Cluster']} | Size: {entry['Size']}")
-
-            # Kiểm tra nếu là Folder và không phải '.' hay '..' để tránh vòng lặp vô hạn
-            if entry['Type'] == "Folder" and entry['Name'] not in [".", ".."]:
-                self.read_tree(device, boot_sector, entry['First Cluster'], indent + "   ")
 
     def read_directory(self,device, boot_sector, first_cluster):
         """ Đọc tất cả file trong một thư mục bằng cách duyệt hết các cluster """
@@ -175,11 +185,16 @@ class FAT32Reader(FileSystemReader):
                             size = FileSystemReader.read_little_endian(entry, 28, 4)
                             entry_type = "Folder" if attr & 0x10 else "File"
 
+                            creation_time = self.parse_time(FileSystemReader.read_little_endian(entry, 14, 2))
+                            creation_date = self.parse_date(FileSystemReader.read_little_endian(entry, 16, 2))
+
                             entries.append({
                                 "Name": name,
                                 "Type": entry_type,
                                 "First Cluster": first_cluster,
-                                "Size": size if entry_type == "File" else "-"
+                                "Size": size if entry_type == "File" else "-",
+                                "Creation Date": creation_date,
+                                "Creation Time": creation_time
                             })
                 
             except PermissionError:
@@ -192,26 +207,6 @@ class FAT32Reader(FileSystemReader):
             current_cluster = self.get_next_cluster(device, fat_offset, current_cluster, bytes_per_sector)
         
         return entries
-    
-    def search_file_in_fat32(self, device, boot_sector, current_cluster, file_name):
-        """
-        Recursively search for a file in all directories starting from the given cluster.
-        - device: Path to the device (e.g., \\.\E:)
-        - boot_sector: Boot sector data
-        - current_cluster: Starting cluster of the directory
-        - file_name: Name of the file to search for
-        """
-        entries = self.read_directory(device, boot_sector, current_cluster)
-        for entry in entries:
-            if entry["Name"] == file_name and entry["Type"] == "File":
-                # File found, return its details
-                return entry
-            elif entry["Type"] == "Folder" and entry["Name"] not in [".", ".."]:
-                # Recursively search in subdirectory
-                result = self.search_file_in_fat32(device, boot_sector, entry["First Cluster"], file_name)
-                if result:
-                    return result
-        return None
     
     def read_file_content(self, device, boot_sector, start_cluster, file_size):
         """
@@ -269,8 +264,7 @@ class FAT32Reader(FileSystemReader):
             print("\n📂 Current Directory:")
             for entry in entries:
                 icon = "📁" if entry["Type"] == "Folder" else "📄"
-                print(f"  {icon} {entry['Name']}")
-
+                print(f"  {icon} {entry['Name']} (Created: {entry['Creation Date']} {entry['Creation Time']}, Size: {entry['Size']})")
             # Prompt user for input
             user_input = input("\nEnter the name of a file or directory (or '..' to go back): ").strip()
 
@@ -289,6 +283,7 @@ class FAT32Reader(FileSystemReader):
                         break
 
                 if found_entry:
+
                     if found_entry["Type"] == "File":
                         # Handle file
                         if found_entry["Name"].endswith(".txt") or found_entry["Name"].endswith(".TXT"):
@@ -354,6 +349,22 @@ class NTFSReader(FileSystemReader):
         }
         return info
 
+    def parse_ntfs_timestamp(self, raw_timestamp):
+        """Parse NTFS timestamp into a human-readable string."""
+        timestamp = int.from_bytes(raw_timestamp, "little")
+        if timestamp == 0:
+            return "N/A"
+
+        # NTFS epoch starts at 1601-01-01
+        epoch = datetime(1601, 1, 1)
+        utc_time = epoch + timedelta(microseconds=timestamp // 10)
+
+        # Add time zone offset (e.g., UTC+7)
+        timezone_offset = timedelta(hours=7)  # Adjust this value for your local time zone
+        local_time = utc_time + timezone_offset
+
+        return local_time.strftime("%Y-%m-%d %H:%M:%S")
+
 
     def parse_ntfs_mft_record(self,record_data, record_number):
         """
@@ -366,13 +377,19 @@ class NTFSReader(FileSystemReader):
         # Kiểm tra chữ ký "FILE"
         if record_data[0:4] != b"FILE":
             return None
+        
         flags = FileSystemReader.read_little_endian(record_data, 22, 2)
         is_directory = bool(flags & 0x02)
+
         # Lấy offset các attribute từ record header (offset 20, 2 bytes)
         attr_offset = FileSystemReader.read_little_endian(record_data, 20, 2)
         file_name = None
         parent_ref = None
         offset = attr_offset
+
+        creation_time = None
+        file_size = None
+
         while offset < len(record_data):
             # Mỗi attribute có:
             #   - Type (4 bytes). Nếu = 0xFFFFFFFF thì kết thúc.
@@ -382,8 +399,13 @@ class NTFSReader(FileSystemReader):
             attr_length = int.from_bytes(record_data[offset+4:offset+8], "little")
             if attr_length == 0:
                 break
+            if attr_type == 0x10:
+                content_offset = int.from_bytes(record_data[offset + 20:offset + 22], "little")
+                content = record_data[offset + content_offset:offset + content_offset + 48]
+                creation_time = self.parse_ntfs_timestamp(content[0:8])
+
             # Nếu attribute là FILE_NAME (type 0x30)
-            if attr_type == 0x30:
+            elif attr_type == 0x30:
                 # Resident attribute: đọc content length và offset từ header
                 content_length = int.from_bytes(record_data[offset+16:offset+20], "little")
                 content_offset = int.from_bytes(record_data[offset+20:offset+22], "little")
@@ -406,6 +428,17 @@ class NTFSReader(FileSystemReader):
                 file_name = name
                 parent_ref = parent_record
                 break
+
+            elif attr_type == 0x80:
+                non_resident_flag = record_data[offset + 8]
+                if non_resident_flag == 0:
+                    # Resident data
+                    content_length = int.from_bytes(record_data[offset + 16:offset + 20], "little")
+                    file_size = content_length
+                else:
+                    # Non-resident data
+                    file_size = int.from_bytes(record_data[offset + 48:offset + 56], "little")
+            
             offset += attr_length
         if file_name is None:
             return None
@@ -414,6 +447,8 @@ class NTFSReader(FileSystemReader):
             "name": file_name,
             "parent": parent_ref,
             "is_directory": is_directory,
+            "creation_time": creation_time,
+            "size": file_size if not is_directory else None,
             "children": []
         }
 
@@ -468,19 +503,6 @@ class NTFSReader(FileSystemReader):
                 records[parent]["children"].append(rec)
         # Trả về record gốc (nếu có)
         return records.get(root_record, None)
-
-    def print_tree(self, node, indent=""):
-        """ In cây thư mục dạng đệ quy """
-        if node is None:
-            return
-
-        if isinstance(node, dict):
-            icon = "📁" if node["is_directory"] else "📄"
-            print(f"{indent}{icon} {node['name']} (Record {node['record_number']})")
-            for child in sorted(node["children"], key=lambda x: x["name"]):
-                self.print_tree(child, indent + "   ")
-        else:
-            print(f"❌ Lỗi: Node không phải là dictionary. Loại: {type(node)}")
 
     def read_file_content(self, device, ntfs_info, mft_record):
         """
@@ -538,7 +560,7 @@ class NTFSReader(FileSystemReader):
             print("\n📂 Current Directory:")
             for child in current_node["children"]:
                 icon = "📁" if child["is_directory"] else "📄"
-                print(f"  {icon} {child['name']}")
+                print(f"  {icon} {child['name']} (Created: {child['creation_time']}, Size: {child['size']})")
 
             # Prompt user for input
             user_input = input("\nEnter the name of a file or directory (or '..' to go back): ").strip()
@@ -576,6 +598,7 @@ class NTFSReader(FileSystemReader):
 
 
 def main():
+    DiskManager.count_partitions()
     device = DiskManager.get_device()
     print(f"✅ Bạn đã chọn ổ đĩa: {device}")
 
