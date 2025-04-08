@@ -256,7 +256,7 @@ class FAT32Reader(FileSystemReader):
         - boot_sector: Boot sector data
         - current_cluster: Current directory cluster
         """
-        parent_cluster = None  # To track the parent directory for ".."
+        parent_stack = []  # Stack to track parent directories
 
         while True:
             # Read the current directory
@@ -265,15 +265,16 @@ class FAT32Reader(FileSystemReader):
             for entry in entries:
                 icon = "📁" if entry["Type"] == "Folder" else "📄"
                 print(f"  {icon} {entry['Name']} (Created: {entry['Creation Date']} {entry['Creation Time']}, Size: {entry['Size']})")
+
             # Prompt user for input
             user_input = input("\nEnter the name of a file or directory (or '..' to go back): ").strip()
 
             if user_input == "..":
-                if parent_cluster is None:
+                if not parent_stack:
                     print("❌ You are already at the root directory.")
                 else:
                     # Go back to the parent directory
-                    current_cluster, parent_cluster = parent_cluster, None
+                    current_cluster = parent_stack.pop()
             else:
                 # Search for the file or directory
                 found_entry = None
@@ -283,7 +284,6 @@ class FAT32Reader(FileSystemReader):
                         break
 
                 if found_entry:
-
                     if found_entry["Type"] == "File":
                         # Handle file
                         if found_entry["Name"].endswith(".txt") or found_entry["Name"].endswith(".TXT"):
@@ -297,7 +297,7 @@ class FAT32Reader(FileSystemReader):
                             print(f"❌ Cannot read file '{found_entry['Name']}'. Only .txt files are supported.")
                     elif found_entry["Type"] == "Folder":
                         # Navigate into the directory
-                        parent_cluster = current_cluster
+                        parent_stack.append(current_cluster)
                         current_cluster = found_entry["First Cluster"]
                     else:
                         print(f"❌ Unknown entry type for '{found_entry['Name']}'.")
