@@ -365,92 +365,159 @@ class NTFSReader(FileSystemReader):
 
         return local_time.strftime("%Y-%m-%d %H:%M:%S")
 
+    def parse_data_runs(self, data_run_bytes):
+        runs = []
+        offset = 0
+        
+        while offset < len(data_run_bytes):
+            header = data_run_bytes[offset]
+            if header == 0x00:
+                break  # End of data runs
+            
+            len_bytes = (header & 0x0F)
+            offset_bytes = (header >> 4) & 0x0F
+            
+            offset += 1
+            
+            # Đọc length và cluster offset
+            run_length = int.from_bytes(data_run_bytes[offset:offset + len_bytes], byteorder="little", signed=False)
+            offset += len_bytes
+            
+            cluster_offset = int.from_bytes(
+                data_run_bytes[offset:offset + offset_bytes],
+                byteorder="little",
+                signed=True
+            )
+            offset += offset_bytes
+            
+            runs.append({
+                "length": run_length,
+                "start_cluster": cluster_offset
+            })
+        
+        return runs
 
-    def parse_ntfs_mft_record(self,record_data, record_number):
+    def parse_ntfs_mft_record(self, record_data, record_number):
         """
-        Giải mã một MFT record để lấy:
+        Parse an MFT record to extract:
         - Signature ("FILE")
-        - Flags (để xác định nếu record là directory)
-        - FILE_NAME attribute: lấy parent directory (8 byte, dùng lower 48 bit) và tên file (utf-16le)
-        Nếu không tìm thấy FILE_NAME, trả về None.
+        - Flags (to determine if the record is a directory)
+        - FILE_NAME attribute: parent directory and file name
+        - DATA attribute: file size
         """
-        # Kiểm tra chữ ký "FILE"
+        # Check for "FILE" signature
         if record_data[0:4] != b"FILE":
             return None
-        
-        flags = FileSystemReader.read_little_endian(record_data, 22, 2)
-        is_directory = bool(flags & 0x02)
 
-        # Lấy offset các attribute từ record header (offset 20, 2 bytes)
+        mft_record = {
+            "record_number": record_number,
+            "name": None,
+            "parent": None,
+            "is_directory": None,
+            "creation_time": None,
+            "size": None,
+            "allocated_size": None,
+            "is_resident": None,
+            "data": None,
+            "data_runs": [],
+            "children": []
+        }
+
+        flags = FileSystemReader.read_little_endian(record_data, 22, 2)
+        mft_record["is_directory"] = bool(flags & 0x02)
+
+        # Get the offset to the first attribute
         attr_offset = FileSystemReader.read_little_endian(record_data, 20, 2)
-        file_name = None
-        parent_ref = None
         offset = attr_offset
 
-        creation_time = None
-        file_size = None
+        # Initialize non_resident_flag to avoid undefined variable errors
+        non_resident_flag = None
 
         while offset < len(record_data):
-            # Mỗi attribute có:
-            #   - Type (4 bytes). Nếu = 0xFFFFFFFF thì kết thúc.
-            attr_type = int.from_bytes(record_data[offset:offset+4], "little")
+            # Each attribute has:
+            # - Type (4 bytes). If 0xFFFFFFFF, it's the end of attributes.
+            attr_type = int.from_bytes(record_data[offset:offset + 4], "little")
             if attr_type == 0xFFFFFFFF:
                 break
-            attr_length = int.from_bytes(record_data[offset+4:offset+8], "little")
+
+            attr_length = int.from_bytes(record_data[offset + 4:offset + 8], "little")
             if attr_length == 0:
                 break
+
+            # STANDARD_INFORMATION attribute (type 0x10)
             if attr_type == 0x10:
                 content_offset = int.from_bytes(record_data[offset + 20:offset + 22], "little")
                 content = record_data[offset + content_offset:offset + content_offset + 48]
-                creation_time = self.parse_ntfs_timestamp(content[0:8])
+                mft_record["creation_time"] = self.parse_ntfs_timestamp(content[0:8])
 
-            # Nếu attribute là FILE_NAME (type 0x30)
-            elif attr_type == 0x30:
-                # Resident attribute: đọc content length và offset từ header
-                content_length = int.from_bytes(record_data[offset+16:offset+20], "little")
-                content_offset = int.from_bytes(record_data[offset+20:offset+22], "little")
-                content = record_data[offset+content_offset : offset+content_offset+content_length]
-                # Cấu trúc FILE_NAME: 8 byte Parent, sau đó 48 byte các timestamp, size,... sau đó:
-                # - File name length (1 byte) tại offset 64
-                # - File name namespace (1 byte) tại offset 65
-                # - File name (variable, 2 bytes/char) bắt đầu từ offset 66
+            # FILE_NAME attribute (type 0x30)
+            elif attr_type == 0x30 and mft_record["name"] is None:  # Only parse the first valid FILE_NAME
+                # Read content length and offset from the attribute header
+                content_length = int.from_bytes(record_data[offset + 16:offset + 20], "little")
+                content_offset = int.from_bytes(record_data[offset + 20:offset + 22], "little")
+                content = record_data[offset + content_offset:offset + content_offset + content_length]
+
+                # Ensure the content is large enough to contain the required fields
                 if len(content) < 66:
                     offset += attr_length
                     continue
-                parent_ref_val = int.from_bytes(content[0:8], "little")
-                # Lấy 48-bit thấp cho số record
-                parent_record = parent_ref_val & 0xFFFFFFFFFFFF
-                name_length = content[64]
-                try:
-                    name = content[66:66+name_length*2].decode("utf-16le", errors="ignore")
-                except Exception:
-                    name = "<Error decoding>"
-                file_name = name
-                parent_ref = parent_record
-                break
 
+                # Parse the parent reference (first 8 bytes)
+                parent_ref_val = int.from_bytes(content[0:8], "little")
+                mft_record["parent"] = parent_ref_val & 0xFFFFFFFFFFFF  # Extract the 48-bit record number
+
+                # Parse the file name length (1 byte at offset 64)
+                name_length = content[64]
+
+                try:
+                    # Decode the file name (UTF-16LE, starting at offset 66)
+                    if name_length > 0:
+                        mft_record["name"] = content[66:66 + name_length * 2].decode("utf-16le", errors="ignore").strip()
+                        print(f"DEBUG: Parsed name for record {record_number}: {mft_record['name']}")
+                    else:
+                        mft_record["name"] = "<Empty Name>"
+                        print(f"DEBUG: Empty name for record {record_number}")
+                except Exception as e:
+                    print(f"DEBUG: Error decoding FILE_NAME for record {record_number}: {e}")
+                    mft_record["name"] = "<Error decoding>"
+
+            # DATA attribute (type 0x80)
             elif attr_type == 0x80:
                 non_resident_flag = record_data[offset + 8]
-                if non_resident_flag == 0:
+                mft_record["is_resident"] = non_resident_flag == 0
+
+                if mft_record["is_resident"]:
                     # Resident data
                     content_length = int.from_bytes(record_data[offset + 16:offset + 20], "little")
-                    file_size = content_length
+                    mft_record["size"] = content_length
+                    # Read resident data
+                    content_offset = int.from_bytes(record_data[offset + 20:offset + 22], "little")
+                    mft_record["data"] = record_data[offset + content_offset:offset + content_offset + content_length]
                 else:
                     # Non-resident data
-                    file_size = int.from_bytes(record_data[offset + 48:offset + 56], "little")
-            
+                    mft_record["allocated_size"] = int.from_bytes(record_data[offset + 40:offset + 48], "little")
+                    mft_record["size"] = int.from_bytes(record_data[offset + 48:offset + 56], "little")
+                    # Parse data runs for non-resident files
+                    data_run_offset = int.from_bytes(record_data[offset + 32:offset + 34], "little")
+                    if data_run_offset > 0:
+                        data_run_data = record_data[offset + data_run_offset:offset + attr_length]
+                        mft_record["data_runs"] = self.parse_data_runs(data_run_data)
+
             offset += attr_length
-        if file_name is None:
-            return None
-        return {
-            "record_number": record_number,
-            "name": file_name,
-            "parent": parent_ref,
-            "is_directory": is_directory,
-            "creation_time": creation_time,
-            "size": file_size if not is_directory else None,
-            "children": []
-        }
+
+        if mft_record["name"] is None:
+            mft_record["name"] = f"<Unknown_{record_number}>"
+
+        print(f"DEBUG: Parsing $DATA attribute for record {record_number}")
+        print(f"  Non-Resident Flag: {non_resident_flag}")
+        print(f"  Resident: {mft_record['is_resident']}")
+        if mft_record["is_resident"]:
+            print(f"  Logical Size: {mft_record['size']}")
+        else:
+            print(f"  Logical Size: {mft_record['size']}")
+            print(f"  Allocated Size: {mft_record['allocated_size']}")
+            print(f"  Data Runs: {mft_record['data_runs']}")
+        return mft_record
 
     # ------------------------------
     # Đọc một số MFT record từ NTFS (giả sử MFT nằm liền mạch)
@@ -505,46 +572,28 @@ class NTFSReader(FileSystemReader):
         return records.get(root_record, None)
 
     def read_file_content(self, device, ntfs_info, mft_record):
-        """
-        Read the content of a file from the NTFS file system.
-        - device: Path to the device (e.g., \\.\E:)
-        - ntfs_info: NTFS boot sector information
-        - mft_record: MFT record of the file
-        """
         bytes_per_sector = ntfs_info["Bytes per Sector"]
         sectors_per_cluster = ntfs_info["Sectors per Cluster"]
-
-        # Check if the file is resident or non-resident
+        
         if mft_record.get("is_resident", False):
-            # Resident data: Content is stored directly in the MFT record
-            file_data = mft_record.get("data", b"")
-            return file_data
+            return mft_record.get("data", b"")
         else:
-            # Non-resident data: Content is stored in clusters on the disk
             data_runs = mft_record.get("data_runs", [])
             file_size = mft_record.get("size", 0)
-
-            if not data_runs:
-                print("❌ No data runs found for the file.")
-                return b""
-
+            
             file_data = b""
             with open(device, "rb") as disk:
+                current_cluster = 0
                 for run in data_runs:
-                    # Calculate the offset of the cluster in the data region
-                    cluster_offset = run["start_cluster"] * sectors_per_cluster * bytes_per_sector
-                    cluster_size = run["length"] * sectors_per_cluster * bytes_per_sector
-
-                    # Read the data from the cluster
-                    disk.seek(cluster_offset)
-                    data = disk.read(cluster_size)
-                    file_data += data
-
-                    # Stop reading if the file size has been reached
-                    if len(file_data) >= file_size:
-                        return file_data[:file_size]
-
-            return file_data
+                    # Tính toán offset vật lý
+                    current_cluster += run["start_cluster"]
+                    physical_offset = current_cluster * sectors_per_cluster * bytes_per_sector
+                    bytes_to_read = run["length"] * sectors_per_cluster * bytes_per_sector
+                    
+                    disk.seek(physical_offset)
+                    file_data += disk.read(bytes_to_read)
+            
+            return file_data[:file_size]  # Trim theo kích thước thực
 
     def menu_ntfs(self, device, ntfs_info, current_node):
         """
