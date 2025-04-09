@@ -61,15 +61,28 @@ class DiskExplorerApp(ctk.CTk):
         self.main_frame.grid_rowconfigure(0, weight=1)
 
         # Treeview with scrollbar
-        self.tree = ttk.Treeview(self.main_frame, columns=("Type", "Size", "Date"), show="tree")
+        self.tree = ttk.Treeview(self.main_frame, columns=("Type", "Size", "Date"), show="tree headings")
         self.tree.grid(row=0, column=0, sticky="nsew")
 
+        # Configure column headers
+        self.tree.heading("#0", text="File name")  # Tree column for file name
+        self.tree.heading("Type", text="Type")
+        self.tree.heading("Size", text="Size")
+        self.tree.heading("Date", text="Date")
+
+        # Configure column widths
+        self.tree.column("#0", width=300, anchor="w")  # File name column
+        self.tree.column("Type", width=150, anchor="center")
+        self.tree.column("Size", width=100, anchor="center")
+        self.tree.column("Date", width=200, anchor="center")
+
+        # Add vertical scrollbar
         vsb = ttk.Scrollbar(self.main_frame, orient="vertical", command=self.tree.yview)
         vsb.grid(row=0, column=1, sticky="ns")
         self.tree.configure(yscrollcommand=vsb.set)
 
 
-        # Configure weights
+
         self.main_frame.grid_columnconfigure(0, weight=1)
         self.main_frame.grid_rowconfigure(0, weight=1)
 
@@ -166,7 +179,6 @@ class DiskExplorerApp(ctk.CTk):
                 self.current_reader.boot_sector, 
                 cluster
             )
-            
             # Add ".." entry for parent directory
             if len(self.current_cluster_stack) > 1:
                 self.tree.insert("", "end", text="..", values=("Parent Folder", "", ""), image=self.folder_icon)
@@ -174,17 +186,19 @@ class DiskExplorerApp(ctk.CTk):
             for entry in entries:
                 if entry["Name"] == "." or entry["Name"] == "..":
                     continue
+
+                creation_datetime = f"{entry['Creation Date']} {entry['Creation Time']}"
                 if entry["Type"] == "Folder":
                     self.tree.insert("", "end", text=entry["Name"], 
-                                 values=("Folder", entry["Size"], entry["Creation Date"]),
+                                 values=("Folder", entry["Size"], creation_datetime),
                                  image=self.folder_icon)
                 elif entry["Name"].lower().endswith(".txt"):
                     self.tree.insert("", "end", text=entry["Name"], 
-                                 values=("File", entry["Size"], entry["Creation Date"]),
+                                 values=("File", entry["Size"], creation_datetime),
                                  image=self.txt_file_icon)
                 else:
                     self.tree.insert("", "end", text=entry["Name"], 
-                                 values=("File", entry["Size"], entry["Creation Date"]),
+                                 values=("File", entry["Size"], creation_datetime),
                                  image=self.file_icon)
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load directory: {str(e)}")

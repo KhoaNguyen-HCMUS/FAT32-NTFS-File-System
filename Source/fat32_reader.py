@@ -133,7 +133,7 @@ class FAT32Reader(FileSystemReader):
                                 "Name": name,
                                 "Type": entry_type,
                                 "First Cluster": first_cluster,
-                                "Size": size if entry_type == "File" else "-",
+                                "Size": size if entry_type == "File" else "None",
                                 "Creation Date": creation_date,
                                 "Creation Time": creation_time
                             })
