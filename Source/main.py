@@ -6,7 +6,6 @@ from tkinter.scrolledtext import ScrolledText
 import threading
 import pythoncom
 
-from disk_manager import DiskManager
 from file_system_reader import FileSystemReader
 from fat32_reader import FAT32Reader
 from ntfs_reader import NTFSReader
