@@ -1,5 +1,3 @@
-import sys
-
 import customtkinter as ctk
 from tkinter import ttk, messagebox, PhotoImage
 from tkinter.scrolledtext import ScrolledText
@@ -7,7 +5,6 @@ import threading
 import pythoncom
 
 from PIL import Image, ImageTk  # Import Image and ImageTk from Pillow
-
 
 from file_system_reader import FileSystemReader
 from fat32_reader import FAT32Reader
@@ -51,9 +48,6 @@ class DiskExplorerApp(ctk.CTk):
         self.select_btn = ctk.CTkButton(self.disk_frame, text="Select Disk", command=self.select_disk)
         self.select_btn.pack(side="left", padx=5)
 
-        self.back_btn = ctk.CTkButton(self.disk_frame, text="← Back", command=self.navigate_back)
-        self.back_btn.pack(side="left", padx=5)
-
         # Main content area
         self.main_frame = ctk.CTkFrame(self)
         self.main_frame.grid(row=1, column=0, padx=10, pady=5, sticky="nsew")
@@ -81,16 +75,40 @@ class DiskExplorerApp(ctk.CTk):
         vsb.grid(row=0, column=1, sticky="ns")
         self.tree.configure(yscrollcommand=vsb.set)
 
+        # Configure the grid layout for the entire application
+        self.grid_columnconfigure(0, weight=8)  # Main frame takes more space
+        self.grid_columnconfigure(1, weight=1)  # Info frame takes less space
+        self.grid_rowconfigure(1, weight=1)  # Both frames share the same row
 
+        # Info frame to display FAT32 or NTFS information
+        self.info_frame = ctk.CTkFrame(self)
+        self.info_frame.grid(row=1, column=1, padx=2, pady=2, sticky="nsew") 
+        self.info_frame.grid_rowconfigure(0, weight=1)
 
-        self.main_frame.grid_columnconfigure(0, weight=1)
-        self.main_frame.grid_rowconfigure(0, weight=1)
+        # Add a title label for the info frame
+        self.info_label = ctk.CTkLabel(self.info_frame, text="File system Info", font=("Arial", 16, "bold"))
+        self.info_label.pack(pady=5)
+
+        # Add a text widget to display the info
+        self.info_text = ScrolledText(self.info_frame, wrap="word", state="disabled", height=10)
+        self.info_text.pack(fill="both", expand=True, padx=10, pady=10)
+
 
         # Bind double click event
         self.tree.bind("<Double-1>", self.on_item_double_click)
 
         # Initial disk refresh
         self.refresh_disks()
+
+    def update_info_frame(self, info):
+        """Update the info frame with filesystem information."""
+        self.info_text.config(state="normal")
+        self.info_text.delete(1.0, "end")  # Clear existing content
+
+        for key, value in info.items():
+            self.info_text.insert("end", f"{key}: {value}\n")  # Add key-value pairs
+
+        self.info_text.config(state="disabled")  # Make the text read-only
 
     def refresh_disks(self):
         def _refresh():
@@ -154,6 +172,7 @@ class DiskExplorerApp(ctk.CTk):
                     root_cluster = fat32_info["Root Cluster Index"]
                     self.current_cluster_stack = [root_cluster]
                     self.populate_fat32_tree(root_cluster)
+                    self.update_info_frame(fat32_info)
                     
                 elif self.fs_type == "NTFS":
                     self.current_reader = NTFSReader(device)
@@ -162,6 +181,7 @@ class DiskExplorerApp(ctk.CTk):
                     self.ntfs_root = self.current_reader.build_tree(self.ntfs_records)
                     self.current_node_stack = [self.ntfs_root]
                     self.populate_ntfs_tree(self.ntfs_root)
+                    self.update_info_frame(self.current_reader.ntfs_info)
                     
                 else:
                     messagebox.showerror("Error", "Unsupported filesystem")
