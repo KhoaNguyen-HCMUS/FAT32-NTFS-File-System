@@ -801,6 +801,8 @@ class DiskExplorerApp(ctk.CTk):
                 self.tree.insert("", "end", text="..", values=("Parent Folder", "", ""))
             
             for entry in entries:
+                if entry["Name"] == "." or entry["Name"] == "..":
+                    continue
                 if entry["Type"] == "Folder":
                     item = self.tree.insert("", "end", text=entry["Name"], 
                                           values=("Folder", entry["Size"], entry["Creation Date"]))
