@@ -20,7 +20,7 @@ class DiskExplorerApp(ctk.CTk):
         super().__init__()
         self.title("23127211_23127524 - Disk Explorer")
         self.geometry("1200x800")
-        ctk.set_appearance_mode("Dark")
+        ctk.set_appearance_mode("Light")
         ctk.set_default_color_theme("blue")
 
         self.current_reader = None
@@ -33,6 +33,7 @@ class DiskExplorerApp(ctk.CTk):
         self.folder_icon = ImageTk.PhotoImage(Image.open("assets/folder.png").resize((20, 20), Image.LANCZOS))
         self.file_icon = ImageTk.PhotoImage(Image.open("assets/info.png").resize((20, 20), Image.LANCZOS))
         self.txt_file_icon = ImageTk.PhotoImage(Image.open("assets/txt.png").resize((20, 20), Image.LANCZOS))
+        
 
         # Configure grid layout
         self.grid_columnconfigure(0, weight=1)
@@ -46,9 +47,6 @@ class DiskExplorerApp(ctk.CTk):
         self.disk_combo.pack(side="left", padx=5, pady=5)
         self.disk_combo.set("Select a Disk")  # Set the default text
 
-
-        self.refresh_btn = ctk.CTkButton(self.disk_frame, text="Refresh", command=self.refresh_disks)
-        self.refresh_btn.pack(side="left", padx=5)
 
         self.select_btn = ctk.CTkButton(self.disk_frame, text="Select Disk", command=self.select_disk)
         self.select_btn.pack(side="left", padx=5)
@@ -70,13 +68,9 @@ class DiskExplorerApp(ctk.CTk):
         vsb.grid(row=0, column=1, sticky="ns")
         self.tree.configure(yscrollcommand=vsb.set)
 
-        # File content viewer
-        self.content_text = ScrolledText(self.main_frame, wrap="word", state="disabled")
-        self.content_text.grid(row=0, column=2, sticky="nsew", padx=5)
 
         # Configure weights
         self.main_frame.grid_columnconfigure(0, weight=1)
-        self.main_frame.grid_columnconfigure(2, weight=2)
         self.main_frame.grid_rowconfigure(0, weight=1)
 
         # Bind double click event
@@ -256,10 +250,9 @@ class DiskExplorerApp(ctk.CTk):
                 messagebox.showinfo("Info", "Only .txt files can be previewed")
 
     def display_file_content(self, filename):
-        self.content_text.config(state="normal")
-        self.content_text.delete(1.0, "end")
-        
         try:
+            # Read the file content
+            content = ""
             if self.fs_type == "FAT32":
                 entries = self.current_reader.read_directory(
                     self.current_reader.device,
@@ -273,8 +266,7 @@ class DiskExplorerApp(ctk.CTk):
                             self.current_reader.boot_sector,
                             entry["First Cluster"],
                             entry["Size"]
-                        )
-                        self.content_text.insert("end", content.decode("utf-8", errors="replace"))
+                        ).decode("utf-8", errors="replace")
                         break
             elif self.fs_type == "NTFS":
                 current_node = self.current_node_stack[-1]
@@ -284,13 +276,22 @@ class DiskExplorerApp(ctk.CTk):
                             self.current_reader.device,
                             self.current_reader.ntfs_info,
                             child
-                        )
-                        self.content_text.insert("end", content.decode("utf-8", errors="replace"))
+                        ).decode("utf-8", errors="replace")
                         break
+
+            # Open a new window to display the content
+            new_window = ctk.CTkToplevel(self)
+            new_window.title(f"Viewing: {filename}")
+            new_window.geometry("800x600")
+
+            # Add a ScrolledText widget to the new window
+            text_widget = ScrolledText(new_window, wrap="word", state="normal")
+            text_widget.pack(fill="both", expand=True, padx=10, pady=10)
+            text_widget.insert("1.0", content)
+            text_widget.config(state="disabled")  # Make the text read-only
+
         except Exception as e:
-            self.content_text.insert("end", f"Error reading file: {str(e)}")
-            
-        self.content_text.config(state="disabled")
+            messagebox.showerror("Error", f"Failed to read file: {str(e)}")
 
 if __name__ == "__main__":
     app = DiskExplorerApp()
