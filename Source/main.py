@@ -1,10 +1,13 @@
 import sys
 
 import customtkinter as ctk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, PhotoImage
 from tkinter.scrolledtext import ScrolledText
 import threading
 import pythoncom
+
+from PIL import Image, ImageTk  # Import Image and ImageTk from Pillow
+
 
 from file_system_reader import FileSystemReader
 from fat32_reader import FAT32Reader
@@ -15,7 +18,7 @@ import wmi
 class DiskExplorerApp(ctk.CTk):
     def __init__(self):
         super().__init__()
-        self.title("Disk Explorer")
+        self.title("23127211_23127524 - Disk Explorer")
         self.geometry("1200x800")
         ctk.set_appearance_mode("Dark")
         ctk.set_default_color_theme("blue")
@@ -27,6 +30,10 @@ class DiskExplorerApp(ctk.CTk):
         self.ntfs_records = None
         self.ntfs_root = None
 
+        self.folder_icon = ImageTk.PhotoImage(Image.open("assets/folder.png").resize((20, 20), Image.LANCZOS))
+        self.file_icon = ImageTk.PhotoImage(Image.open("assets/info.png").resize((20, 20), Image.LANCZOS))
+        self.txt_file_icon = ImageTk.PhotoImage(Image.open("assets/txt.png").resize((20, 20), Image.LANCZOS))
+
         # Configure grid layout
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(1, weight=1)
@@ -37,6 +44,8 @@ class DiskExplorerApp(ctk.CTk):
 
         self.disk_combo = ctk.CTkComboBox(self.disk_frame, width=300)
         self.disk_combo.pack(side="left", padx=5, pady=5)
+        self.disk_combo.set("Select a Disk")  # Set the default text
+
 
         self.refresh_btn = ctk.CTkButton(self.disk_frame, text="Refresh", command=self.refresh_disks)
         self.refresh_btn.pack(side="left", padx=5)
@@ -80,6 +89,7 @@ class DiskExplorerApp(ctk.CTk):
         def _refresh():
             pythoncom.CoInitialize()  # Initialize COM for this thread
             try:
+                # Refresh the list of available disks
                 partitions = []
                 c = wmi.WMI()
                 for p in c.Win32_LogicalDisk():
@@ -90,8 +100,14 @@ class DiskExplorerApp(ctk.CTk):
                             "filesystem": p.FileSystem
                         })
                 self.disk_combo.configure(values=[f"{p['device_id']} ({p['filesystem']})" for p in partitions])
+
+                # Refresh the contents of the currently selected directory
+                if self.fs_type == "FAT32" and self.current_cluster_stack:
+                    self.populate_fat32_tree(self.current_cluster_stack[-1])
+                elif self.fs_type == "NTFS" and self.current_node_stack:
+                    self.populate_ntfs_tree(self.current_node_stack[-1])
             except Exception as e:
-                messagebox.showerror("Error", f"Failed to get disks: {str(e)}")
+                messagebox.showerror("Error", f"Failed to refresh: {str(e)}")
             finally:
                 pythoncom.CoUninitialize()  # Clean up COM
 
@@ -159,17 +175,23 @@ class DiskExplorerApp(ctk.CTk):
             
             # Add ".." entry for parent directory
             if len(self.current_cluster_stack) > 1:
-                self.tree.insert("", "end", text="..", values=("Parent Folder", "", ""))
+                self.tree.insert("", "end", text="..", values=("Parent Folder", "", ""), image=self.folder_icon)
             
             for entry in entries:
                 if entry["Name"] == "." or entry["Name"] == "..":
                     continue
                 if entry["Type"] == "Folder":
-                    item = self.tree.insert("", "end", text=entry["Name"], 
-                                          values=("Folder", entry["Size"], entry["Creation Date"]))
+                    self.tree.insert("", "end", text=entry["Name"], 
+                                 values=("Folder", entry["Size"], entry["Creation Date"]),
+                                 image=self.folder_icon)
+                elif entry["Name"].lower().endswith(".txt"):
+                    self.tree.insert("", "end", text=entry["Name"], 
+                                 values=("File", entry["Size"], entry["Creation Date"]),
+                                 image=self.txt_file_icon)
                 else:
                     self.tree.insert("", "end", text=entry["Name"], 
-                                   values=("File", entry["Size"], entry["Creation Date"]))
+                                 values=("File", entry["Size"], entry["Creation Date"]),
+                                 image=self.file_icon)
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load directory: {str(e)}")
 
@@ -182,11 +204,20 @@ class DiskExplorerApp(ctk.CTk):
             
             for child in node["children"]:
                 if child["is_directory"]:
-                    item = self.tree.insert("", "end", text=child["name"], 
-                                          values=("Folder", child["size"], child["creation_time"]))
-                else:
+                # Add folder entry with folder icon
                     self.tree.insert("", "end", text=child["name"], 
-                                   values=("File", child["size"], child["creation_time"]))
+                                 values=("Folder", child["size"], child["creation_time"]),
+                                 image=self.folder_icon)
+                elif child["name"].lower().endswith(".txt"):
+                    # Add .txt file entry with txt file icon
+                    self.tree.insert("", "end", text=child["name"], 
+                                    values=("File", child["size"], child["creation_time"]),
+                                    image=self.txt_file_icon)
+                else:
+                    # Add other file types with generic file icon
+                    self.tree.insert("", "end", text=child["name"], 
+                                    values=("File", child["size"], child["creation_time"]),
+                                    image=self.file_icon)
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load directory: {str(e)}")
 
