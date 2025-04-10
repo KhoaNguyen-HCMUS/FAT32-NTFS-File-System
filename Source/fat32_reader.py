@@ -24,11 +24,11 @@ class FAT32Reader(FileSystemReader):
         name = entry[:8].decode("ascii", errors="ignore").strip()
         ext = entry[8:11].decode("ascii", errors="ignore").strip()
 
-        # Check case bits in DIR_NTRes (byte 12)
+        # Kiểm tra tại offset 12
         case_bits = entry[12]
-        if case_bits & 0x08:  # Lowercase base name
+        if case_bits & 0x08:  # Viết thường tên
             name = name.lower()
-        if case_bits & 0x10:  # Lowercase extension
+        if case_bits & 0x10:  # Viết thường phần mở rộng
             ext = ext.lower()
 
         return f"{name}.{ext}" if ext else name
@@ -50,14 +50,14 @@ class FAT32Reader(FileSystemReader):
         return full_name
 
     def parse_date(self, raw_date):
-        """Parse FAT32 date format into a human-readable string."""
+        """Giải mã định dạng ngày FAT32 thành chuỗi YYYY-MM-DD."""
         year = ((raw_date >> 9) & 0x7F) + 1980
         month = (raw_date >> 5) & 0x0F
         day = raw_date & 0x1F
         return f"{year:04d}-{month:02d}-{day:02d}"
 
     def parse_time(self, raw_time):
-        """Parse FAT32 time format into a human-readable string."""
+        """Giải mã định dạng ngày FAT32 thành chuỗi HH-MM-SS."""
         hours = (raw_time >> 11) & 0x1F
         minutes = (raw_time >> 5) & 0x3F
         seconds = (raw_time & 0x1F) * 2
@@ -86,7 +86,6 @@ class FAT32Reader(FileSystemReader):
                 return next_cluster
 
         except Exception as e:
-            # print(f"❌ Lỗi khi đọc FAT cluster {current_cluster}: {e}")
             return None
 
     def read_directory(self,device, boot_sector, first_cluster):
@@ -159,11 +158,11 @@ class FAT32Reader(FileSystemReader):
     
     def read_file_content(self, device, boot_sector, start_cluster, file_size):
         """
-        Read the content of a file from the FAT32 file system.
-        - device: Path to the device (e.g., \\.\E:)
-        - boot_sector: Boot sector data
-        - start_cluster: Starting cluster of the file
-        - file_size: Size of the file in bytes
+        Đọc nội dung của một file từ hệ thống tập tin FAT32.
+        - device: Đường dẫn đến thiết bị (ví dụ: \\.\E:)
+        - boot_sector: Dữ liệu Boot Sector
+        - start_cluster: Cluster bắt đầu của file
+        - file_size: Kích thước của file (bytes)
         """
         fat32_info = self.read_fat32_info(boot_sector)
         bytes_per_sector = fat32_info["Bytes per Sector"]
@@ -172,7 +171,7 @@ class FAT32Reader(FileSystemReader):
         number_of_fats = fat32_info["Number of FATs"]
         sectors_per_fat = fat32_info["Sectors per FAT"]
 
-        # Calculate offsets
+        # Tính toán các offset cần thiết
         fat_offset = reserved_sectors * bytes_per_sector
         data_offset = (reserved_sectors + number_of_fats * sectors_per_fat) * bytes_per_sector
         cluster_size = bytes_per_sector * sectors_per_cluster
@@ -181,18 +180,18 @@ class FAT32Reader(FileSystemReader):
         current_cluster = start_cluster
 
         while current_cluster:
-            # Calculate the offset of the current cluster in the data region
+            # Tính toán offset của cluster trong vùng dữ liệu
             cluster_offset = data_offset + (current_cluster - 2) * cluster_size
             with open(device, "rb") as disk:
                 disk.seek(cluster_offset)
                 data = disk.read(cluster_size)
                 file_data += data
 
-            # Stop reading if the file size has been reached
+            # Kiểm tra xem đã đọc đủ kích thước file chưa
             if len(file_data) >= file_size:
                 return file_data[:file_size]
 
-            # Get the next cluster from the FAT table
+            # Lấy cluster tiếp theo từ bảng FAT
             current_cluster = self.get_next_cluster(device, fat_offset, current_cluster, bytes_per_sector)
 
         return file_data

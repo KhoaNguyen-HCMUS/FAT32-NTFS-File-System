@@ -45,22 +45,30 @@ class NTFSReader(FileSystemReader):
         return info
 
     def parse_ntfs_timestamp(self, raw_timestamp):
-        """Parse NTFS timestamp into a human-readable string."""
+        """Giải mã định dạng ngày và giờ NTFS thành chuỗi YYYY-MM-DD HH-MM-SS."""
         timestamp = int.from_bytes(raw_timestamp, "little")
         if timestamp == 0:
             return "N/A"
 
-        # NTFS epoch starts at 1601-01-01
+        # NTFS timestamp là số microseconds từ 1/1/1601
         epoch = datetime(1601, 1, 1)
         utc_time = epoch + timedelta(microseconds=timestamp // 10)
 
-        # Add time zone offset (e.g., UTC+7)
-        timezone_offset = timedelta(hours=7)  # Adjust this value for your local time zone
+        # Chuyển đổi UTC sang giờ địa phương (UTC+7)
+        timezone_offset = timedelta(hours=7)  
         local_time = utc_time + timezone_offset
 
         return local_time.strftime("%Y-%m-%d %H:%M:%S")
 
     def parse_data_runs(self, data_run_bytes):
+        """
+        Phân tích các data runs trong NTFS.
+        Mỗi data run có định dạng:
+        - 1 byte đầu tiên là header (0x00 cho kết thúc)
+        - Tiếp theo là length (số byte) và offset (số cluster).
+        - Length: số cluster cần đọc (tính bằng bytes_per_sector * sectors_per_cluster).
+        - Offset: số cluster bắt đầu từ vị trí hiện tại.
+        """
         runs = []
         offset = 0
         
@@ -94,12 +102,19 @@ class NTFSReader(FileSystemReader):
 
     def parse_ntfs_mft_record(self, record_data, record_number):
         """
-        Parse an MFT record to extract:
-        - Signature ("FILE")
-        - Flags (to determine if the record is a directory)
-        - FILE_NAME attribute: parent directory and file name
-        - DATA attribute: file size
+        Phân tích một MFT record NTFS.
+        MFT record có thể chứa nhiều thuộc tính (attributes).
+        Mỗi thuộc tính có định dạng:
+        - Ký hiệu "FILE" ở đầu (4 byte) để xác nhận record hợp lệ.
+        - Flags (file/directory) (offset 22, 2 bytes).
+        - Thuộc tính FILE_NAME:
+            ∗ Header: Mỗi thuộc tính bắt đầu với header chứa thông tin về kiểu và độ dài của thuộc tính.
+            ∗ Nội dung: Sau header, nội dung của FILE_NAME bao gồm:
+                · Parent Reference: 8 byte đầu tiên thể hiện số record của thư mục chứa file.
+                · Thông tin tên tập tin: Chứa độ dài (1 byte) và chuỗi tên file được mã hóa bằng UTF-16LE.
+        - Thuộc tính $DATA: Resident/Non-resident.
         """
+        
         # Check for "FILE" signature
         if record_data[0:4] != b"FILE":
             return None
@@ -118,62 +133,64 @@ class NTFSReader(FileSystemReader):
             "children": []
         }
 
+        # Đọc flags để xác định loại file (file/directory)
+        # 0x02: Directory, 0x01: File
         flags = FileSystemReader.read_little_endian(record_data, 22, 2)
         mft_record["is_directory"] = bool(flags & 0x02)
 
-        # Get the offset to the first attribute
+        # Xác định vị trí bắt đầu thuộc tính đầu tiên
+        # 0x14: $STANDARD_INFORMATION, 0x30: $FILE_NAME, 0x80: $DATA
         attr_offset = FileSystemReader.read_little_endian(record_data, 20, 2)
         offset = attr_offset
 
-        # Initialize non_resident_flag to avoid undefined variable errors
+        ## Khởi tạo các trường trong record
         non_resident_flag = None
 
         while offset < len(record_data):
-            # Each attribute has:
-            # - Type (4 bytes). If 0xFFFFFFFF, it's the end of attributes.
+            # Đọc header thuộc tính
+            # 4 byte đầu tiên là loại thuộc tính (attribute type)
             attr_type = int.from_bytes(record_data[offset:offset + 4], "little")
             if attr_type == 0xFFFFFFFF:
                 break
-
+            
+            # 4 byte tiếp theo là độ dài thuộc tính (attribute length)
             attr_length = int.from_bytes(record_data[offset + 4:offset + 8], "little")
             if attr_length == 0:
                 break
 
-            # STANDARD_INFORMATION attribute (type 0x10)
+            # $STANDARD_INFORMATION attribute (type 0x10) chứa thông tin về thời gian tạo file
             if attr_type == 0x10:
                 content_offset = int.from_bytes(record_data[offset + 20:offset + 22], "little")
                 content = record_data[offset + content_offset:offset + content_offset + 48]
                 mft_record["creation_time"] = self.parse_ntfs_timestamp(content[0:8])
 
-            # FILE_NAME attribute (type 0x30)
-            elif attr_type == 0x30 and mft_record["name"] is None:  # Only parse the first valid FILE_NAME
-                # Read content length and offset from the attribute header
+            # FILE_NAME attribute (type 0x30) chứa thông tin tên file và parent reference
+            elif attr_type == 0x30 and mft_record["name"] is None:  # Chỉ lấy tên file đầu tiên
+                # Đọc các trường trong FILE_NAME attribute
                 content_length = int.from_bytes(record_data[offset + 16:offset + 20], "little")
                 content_offset = int.from_bytes(record_data[offset + 20:offset + 22], "little")
                 content = record_data[offset + content_offset:offset + content_offset + content_length]
 
-                # Ensure the content is large enough to contain the required fields
+                # Kiểm tra độ dài nội dung
+                # Nếu nội dung ngắn hơn 66 byte, bỏ qua
+                # (để tránh lỗi khi đọc tên file dài hơn 64 ký tự)
                 if len(content) < 66:
                     offset += attr_length
                     continue
 
-                # Parse the parent reference (first 8 bytes)
+                # Đọc parent reference (8 byte đầu tiên)
                 parent_ref_val = int.from_bytes(content[0:8], "little")
-                mft_record["parent"] = parent_ref_val & 0xFFFFFFFFFFFF  # Extract the 48-bit record number
-
-                # Parse the file name length (1 byte at offset 64)
+                mft_record["parent"] = parent_ref_val & 0xFFFFFFFFFFFF  # Lấy 48 bit cuối cùng
+                # Đọc tên file (1 byte đầu tiên là độ dài, tiếp theo là chuỗi UTF-16LE)
                 name_length = content[64]
 
                 try:
-                    # Decode the file name (UTF-16LE, starting at offset 66)
+                    # Đọc tên file từ byte thứ 66 trở đi (tính bằng byte)
                     if name_length > 0:
                         mft_record["name"] = content[66:66 + name_length * 2].decode("utf-16le", errors="ignore").strip()
-                        print(f"DEBUG: Parsed name for record {record_number}: {mft_record['name']}")
                     else:
                         mft_record["name"] = "<Empty Name>"
-                        print(f"DEBUG: Empty name for record {record_number}")
                 except Exception as e:
-                    print(f"DEBUG: Error decoding FILE_NAME for record {record_number}: {e}")
                     mft_record["name"] = "<Error decoding>"
 
             # DATA attribute (type 0x80)
@@ -185,14 +202,14 @@ class NTFSReader(FileSystemReader):
                     # Resident data
                     content_length = int.from_bytes(record_data[offset + 16:offset + 20], "little")
                     mft_record["size"] = content_length
-                    # Read resident data
+                    # Đọc resident data
                     content_offset = int.from_bytes(record_data[offset + 20:offset + 22], "little")
                     mft_record["data"] = record_data[offset + content_offset:offset + content_offset + content_length]
                 else:
                     # Non-resident data
                     mft_record["allocated_size"] = int.from_bytes(record_data[offset + 40:offset + 48], "little")
                     mft_record["size"] = int.from_bytes(record_data[offset + 48:offset + 56], "little")
-                    # Parse data runs for non-resident files
+                    # Giải mã data runs cho non-resident files
                     data_run_offset = int.from_bytes(record_data[offset + 32:offset + 34], "little")
                     if data_run_offset > 0:
                         data_run_data = record_data[offset + data_run_offset:offset + attr_length]
@@ -202,16 +219,6 @@ class NTFSReader(FileSystemReader):
 
         if mft_record["name"] is None:
             mft_record["name"] = f"<Unknown_{record_number}>"
-
-        print(f"DEBUG: Parsing $DATA attribute for record {record_number}")
-        print(f"  Non-Resident Flag: {non_resident_flag}")
-        print(f"  Resident: {mft_record['is_resident']}")
-        if mft_record["is_resident"]:
-            print(f"  Logical Size: {mft_record['size']}")
-        else:
-            print(f"  Logical Size: {mft_record['size']}")
-            print(f"  Allocated Size: {mft_record['allocated_size']}")
-            print(f"  Data Runs: {mft_record['data_runs']}")
         return mft_record
 
     # ------------------------------
@@ -220,7 +227,8 @@ class NTFSReader(FileSystemReader):
     def read_all_mft_records(self,device, ntfs_info, max_records=1000):
         """
         Đọc liên tiếp các MFT record từ vị trí MFT.
-        Chú ý: Trong thực tế, MFT có thể bị phân mảnh; ví dụ này đơn giản giả sử MFT nằm liên tục.
+        Giới hạn số lượng record đọc được (max_records).
+        Trả về danh sách các record đã đọc.
         """
         records = {}
         bytes_per_sector = ntfs_info["Bytes per Sector"]
@@ -242,12 +250,9 @@ class NTFSReader(FileSystemReader):
                         records[i] = rec
         except Exception as e:
             print("❌ Lỗi khi đọc MFT:", e)
-            sys.exit(1)
+            return None
         return records
 
-    # ------------------------------
-    # Xây dựng cây thư mục từ danh sách MFT record (dựa trên parent reference)
-    # ------------------------------
     def build_tree(self,records, root_record=5):
         """
         Xây dựng cây thư mục dựa vào:
@@ -267,6 +272,12 @@ class NTFSReader(FileSystemReader):
         return records.get(root_record, None)
 
     def read_file_content(self, device, ntfs_info, mft_record):
+        """
+        Đọc nội dung của một file từ MFT record.
+        Nếu file là resident, đọc trực tiếp từ record.
+        Nếu file là non-resident, đọc từ các cluster được chỉ định trong data runs.
+        """
+        # Lấy thông tin từ NTFS info
         bytes_per_sector = ntfs_info["Bytes per Sector"]
         sectors_per_cluster = ntfs_info["Sectors per Cluster"]
         
