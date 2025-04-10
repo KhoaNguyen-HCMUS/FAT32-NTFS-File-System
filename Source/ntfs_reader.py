@@ -136,10 +136,11 @@ class NTFSReader(FileSystemReader):
         # Đọc flags để xác định loại file (file/directory)
         # 0x02: Directory, 0x01: File
         flags = FileSystemReader.read_little_endian(record_data, 22, 2)
+        if (flags & 0x0001) == 0:
+            return None # Không phải file/directory hợp lệ
         mft_record["is_directory"] = bool(flags & 0x02)
 
         # Xác định vị trí bắt đầu thuộc tính đầu tiên
-        # 0x14: $STANDARD_INFORMATION, 0x30: $FILE_NAME, 0x80: $DATA
         attr_offset = FileSystemReader.read_little_endian(record_data, 20, 2)
         offset = attr_offset
 
@@ -221,9 +222,6 @@ class NTFSReader(FileSystemReader):
             mft_record["name"] = f"<Unknown_{record_number}>"
         return mft_record
 
-    # ------------------------------
-    # Đọc một số MFT record từ NTFS (giả sử MFT nằm liền mạch)
-    # ------------------------------
     def read_all_mft_records(self,device, ntfs_info, max_records=1000):
         """
         Đọc liên tiếp các MFT record từ vị trí MFT.

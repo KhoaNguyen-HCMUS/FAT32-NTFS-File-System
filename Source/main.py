@@ -39,7 +39,6 @@ class DiskExplorerApp(ctk.CTk):
         self.disk_combo.pack(side="left", padx=5, pady=5)
         self.disk_combo.set("Select a Disk")  # Set the default text
 
-
         self.select_btn = ctk.CTkButton(self.disk_frame, text="Select Disk", command=self.select_disk)
         self.select_btn.pack(side="left", padx=5)
 
@@ -71,7 +70,7 @@ class DiskExplorerApp(ctk.CTk):
         self.tree.configure(yscrollcommand=vsb.set)
 
         # Cấu hình các cột và hàng cho khu vực chính
-        self.grid_columnconfigure(0, weight=8) 
+        self.grid_columnconfigure(0, weight=3) 
         self.grid_columnconfigure(1, weight=1) 
         self.grid_rowconfigure(1, weight=1)  
 
@@ -93,6 +92,19 @@ class DiskExplorerApp(ctk.CTk):
 
         # Hiển thị nội dung tệp
         self.refresh_disks()
+
+    def format_file_size(self, size_in_bytes):
+        """
+        Định dạng kích thước tệp thành chuỗi dễ đọc hơn.
+        """
+        if size_in_bytes < 1024:
+            return f"{size_in_bytes} B"  # Bytes
+        elif size_in_bytes < 1024 ** 2:
+            return f"{size_in_bytes / 1024:.2f} KB"  # Kilobytes
+        elif size_in_bytes < 1024 ** 3:
+            return f"{size_in_bytes / (1024 ** 2):.2f} MB"  # Megabytes
+        else:
+            return f"{size_in_bytes / (1024 ** 3):.2f} GB"  # Gigabytes
 
     def update_info_frame(self, info):
         """Cập nhật thông tin ổ đĩa."""
@@ -211,11 +223,11 @@ class DiskExplorerApp(ctk.CTk):
                                  image=self.folder_icon)
                 elif entry["Name"].lower().endswith(".txt"):
                     self.tree.insert("", "end", text=entry["Name"], 
-                                 values=("File", entry["Size"], creation_datetime),
+                                 values=("File", self.format_file_size(entry["Size"]), creation_datetime),
                                  image=self.txt_file_icon)
                 else:
                     self.tree.insert("", "end", text=entry["Name"], 
-                                 values=("File", entry["Size"], creation_datetime),
+                                 values=("File", self.format_file_size(entry["Size"]), creation_datetime),
                                  image=self.file_icon)
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load directory: {str(e)}")
@@ -235,11 +247,11 @@ class DiskExplorerApp(ctk.CTk):
                                  image=self.folder_icon)
                 elif child["name"].lower().endswith(".txt"):
                     self.tree.insert("", "end", text=child["name"], 
-                                    values=("File", child["size"], child["creation_time"]),
+                                    values=("File", self.format_file_size(child["size"]), child["creation_time"]),
                                     image=self.txt_file_icon)
                 else:
                     self.tree.insert("", "end", text=child["name"], 
-                                    values=("File", child["size"], child["creation_time"]),
+                                    values=("File", self.format_file_size(child["size"]), child["creation_time"]),
                                     image=self.file_icon)
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load directory: {str(e)}")

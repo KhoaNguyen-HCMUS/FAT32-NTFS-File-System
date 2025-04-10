@@ -26,9 +26,9 @@ class FAT32Reader(FileSystemReader):
 
         # Kiểm tra tại offset 12
         case_bits = entry[12]
-        if case_bits & 0x08:  # Viết thường tên
+        if case_bits & 0x08:  #  Viết thường tên nếu bit 3 được bật
             name = name.lower()
-        if case_bits & 0x10:  # Viết thường phần mở rộng
+        if case_bits & 0x10:  # Viết thường phần mở rộng nếu bit 4 được bật
             ext = ext.lower()
 
         return f"{name}.{ext}" if ext else name
