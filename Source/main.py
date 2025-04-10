@@ -1,5 +1,5 @@
 import customtkinter as ctk
-from tkinter import ttk, messagebox, PhotoImage
+from tkinter import ttk, messagebox
 from tkinter.scrolledtext import ScrolledText
 import threading
 import pythoncom
