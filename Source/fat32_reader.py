@@ -23,6 +23,14 @@ class FAT32Reader(FileSystemReader):
         """ Giải mã tên file ngắn từ entry chính """
         name = entry[:8].decode("ascii", errors="ignore").strip()
         ext = entry[8:11].decode("ascii", errors="ignore").strip()
+
+        # Check case bits in DIR_NTRes (byte 12)
+        case_bits = entry[12]
+        if case_bits & 0x08:  # Lowercase base name
+            name = name.lower()
+        if case_bits & 0x10:  # Lowercase extension
+            ext = ext.lower()
+
         return f"{name}.{ext}" if ext else name
 
     def clean_filename(self,name):
