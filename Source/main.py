@@ -99,6 +99,7 @@ class DiskExplorerApp(ctk.CTk):
         self.info_text.config(state="normal")
         self.info_text.delete(1.0, "end")  # xóa nội dung cũ
 
+        self.info_text.insert("end", f"File System: {self.fs_type} \n")  # thêm tiêu đề
         for key, value in info.items():
             self.info_text.insert("end", f"{key}: {value}\n")  # thêm thông tin mới
 
@@ -115,10 +116,8 @@ class DiskExplorerApp(ctk.CTk):
                     if p.DriveType == 2:  # Ổ đĩa rời
                         partitions.append({
                             "device_id": p.DeviceID,
-                            "description": p.Description,
-                            "filesystem": p.FileSystem
                         })
-                self.disk_combo.configure(values=[f"{p['device_id']} ({p['filesystem']})" for p in partitions])
+                self.disk_combo.configure(values=[f"{p['device_id']} " for p in partitions])
 
                 # Cập nhật thông tin ổ đĩa nếu đã chọn
                 if self.fs_type == "FAT32" and self.current_cluster_stack:
