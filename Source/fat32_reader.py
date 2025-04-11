@@ -80,9 +80,10 @@ class FAT32Reader(FileSystemReader):
         first_data_sector = reserved_sectors + (number_of_fats * sectors_per_fat)
         data_offset = first_data_sector * bytes_per_sector
 
-        fat_table = self.read_fat_table(device, fat_offset, sectors_per_fat, bytes_per_sector)
+        if self.fat_table is None:
+            self.load_fat_table(device, fat_offset, sectors_per_fat, bytes_per_sector)
 
-        clusters = self.get_file_clusters(fat_table, first_cluster)
+        clusters = self.get_file_clusters( first_cluster)
         if clusters is None:
             return None
         entries = []
@@ -138,19 +139,22 @@ class FAT32Reader(FileSystemReader):
 
         return entries
     
-    def read_fat_table(self, device, fat_offset, sectors_per_fat, bytes_per_sector):
+    def load_fat_table(self, device, fat_offset, sectors_per_fat, bytes_per_sector):
         """
         Đọc toàn bộ bảng FAT vào bộ nhớ.
         """
         with open(device, "rb") as disk:
             disk.seek(fat_offset)
-            return disk.read(sectors_per_fat * bytes_per_sector)
+            self.fat_table = disk.read(sectors_per_fat * bytes_per_sector)
 
 
-    def get_file_clusters(self, fat_table, start_cluster):
+    def get_file_clusters(self, start_cluster):
         """
         Lấy danh sách tất cả các cluster của file từ bảng FAT.
         """
+        if self.fat_table is None:
+            print("❌ Không thể đọc bảng FAT!")
+            return None
         clusters = []
         current_cluster = start_cluster
 
@@ -163,9 +167,9 @@ class FAT32Reader(FileSystemReader):
 
             clusters.append(current_cluster)
             cluster_offset = current_cluster * 4
-            if cluster_offset >= len(fat_table):
+            if cluster_offset >= len(self.fat_table):
                 break
-            current_cluster = int.from_bytes(fat_table[cluster_offset:cluster_offset + 4], "little") & 0x0FFFFFFF
+            current_cluster = int.from_bytes(self.fat_table[cluster_offset:cluster_offset + 4], "little") & 0x0FFFFFFF
 
         return clusters
 
@@ -206,10 +210,11 @@ class FAT32Reader(FileSystemReader):
         cluster_size = bytes_per_sector * sectors_per_cluster
 
         # Đọc bảng FAT
-        fat_table = self.read_fat_table(device, fat_offset, sectors_per_fat, bytes_per_sector)
+        if self.fat_table is None:
+            self.load_fat_table(device, fat_offset, sectors_per_fat, bytes_per_sector)
 
         # Lấy danh sách cluster
-        clusters = self.get_file_clusters(fat_table, start_cluster)
+        clusters = self.get_file_clusters(start_cluster)
         if clusters is None:
             return None
 
