@@ -136,9 +136,10 @@ class NTFSReader(FileSystemReader):
         # Đọc flags để xác định loại file (file/directory)
         # 0x02: Directory, 0x01: File
         flags = FileSystemReader.read_little_endian(record_data, 22, 2)
-        if (flags & 0x0001) == 0:
+
+        if (flags & 0x01) == 0: #Bit 0x01 không được bật 
             return None # Không phải file/directory hợp lệ
-        mft_record["is_directory"] = bool(flags & 0x02)
+        mft_record["is_directory"] = bool(flags & 0x02) #Bit 0x02 được bật thì là thư mục
 
         # Xác định vị trí bắt đầu thuộc tính đầu tiên
         attr_offset = FileSystemReader.read_little_endian(record_data, 20, 2)
