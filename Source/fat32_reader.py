@@ -3,6 +3,7 @@ from file_system_reader import FileSystemReader
 class FAT32Reader(FileSystemReader):
     def __init__(self, device):
         super().__init__(device)
+        self.fat_table = None
 
     @staticmethod
     def read_fat32_info(boot_sector):
@@ -17,6 +18,7 @@ class FAT32Reader(FileSystemReader):
             "Root Cluster Index": FileSystemReader.read_little_endian(boot_sector, 0x2C, 4),
             "FAT Type": "".join(chr(boot_sector[i]) for i in range(0x52, 0x52 + 8)).strip(),
         }
+
         return info
 
     def parse_short_name(self,entry):
@@ -63,37 +65,6 @@ class FAT32Reader(FileSystemReader):
         seconds = (raw_time & 0x1F) * 2
         return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
-    def get_next_cluster(self,device, fat_offset, current_cluster, bytes_per_sector):
-        """ Tìm cluster kế tiếp từ bảng FAT """
-        if current_cluster < 2:  # FAT32 bỏ qua cluster 0 và 1
-            print(f"❌ Lỗi: Cluster {current_cluster} không hợp lệ!")
-            return None
-
-        fat_entry_offset = fat_offset + (current_cluster * 4)  # Mỗi FAT entry có 4 byte
-
-        try:
-            with open(device, "rb") as disk:
-                disk.seek(fat_entry_offset)
-                fat_entry = disk.read(4)
-                if len(fat_entry) < 4:
-                    return None
-                
-                next_cluster = int.from_bytes(fat_entry, "little") & 0x0FFFFFFF  
-
-                if next_cluster == 0x0FFFFFF7:
-                    print(f"❌ Lỗi: Cluster {current_cluster} bị lỗi!")
-                    return None 
-
-                # Nếu cluster là giá trị EOF, không có cluster tiếp theo
-                if next_cluster >= 0x0FFFFFF8:
-                    return None
-
-                
-                return next_cluster
-
-        except Exception as e:
-            return None
-
     def read_directory(self,device, boot_sector, first_cluster):
         """ Đọc tất cả file trong một thư mục bằng cách duyệt hết các cluster """
 
@@ -104,14 +75,21 @@ class FAT32Reader(FileSystemReader):
         reserved_sectors = fat32_info["Reserved Sectors"]
         number_of_fats = fat32_info["Number of FATs"]
         sectors_per_fat = fat32_info["Sectors per FAT"]
+
         fat_offset = reserved_sectors * bytes_per_sector
         first_data_sector = reserved_sectors + (number_of_fats * sectors_per_fat)
+        data_offset = first_data_sector * bytes_per_sector
+
+        fat_table = self.read_fat_table(device, fat_offset, sectors_per_fat, bytes_per_sector)
+
+        clusters = self.get_file_clusters(fat_table, first_cluster)
+        if clusters is None:
+            return None
         entries = []
 
-        current_cluster = first_cluster
-        while current_cluster:
-            directory_sector = first_data_sector + ((current_cluster - 2) * sectors_per_cluster)
-            directory_offset = directory_sector * bytes_per_sector
+        for cluster in clusters:
+            directory_sector = (cluster - 2) * sectors_per_cluster
+            directory_offset = data_offset + (directory_sector * bytes_per_sector)
 
             try:
                 with open(device, "rb") as disk:
@@ -120,7 +98,7 @@ class FAT32Reader(FileSystemReader):
 
                     lfn_entries = []
                     for i in range(0, len(data), 32):
-                        entry = data[i:i+32]
+                        entry = data[i:i + 32]
                         if entry[0] == 0x00:
                             break  # Entry trống -> kết thúc
                         if entry[0] == 0xE5:
@@ -150,25 +128,70 @@ class FAT32Reader(FileSystemReader):
                                 "Creation Date": creation_date,
                                 "Creation Time": creation_time
                             })
-                
+
             except PermissionError:
                 print("❌ Không đủ quyền truy cập! Hãy chạy bằng quyền Administrator.")
                 exit()
             except FileNotFoundError:
                 print("❌ Ổ đĩa không tồn tại hoặc không thể truy cập.")
                 exit()
-            
-            current_cluster = self.get_next_cluster(device, fat_offset, current_cluster, bytes_per_sector)
-        
+
         return entries
     
+    def read_fat_table(self, device, fat_offset, sectors_per_fat, bytes_per_sector):
+        """
+        Đọc toàn bộ bảng FAT vào bộ nhớ.
+        """
+        with open(device, "rb") as disk:
+            disk.seek(fat_offset)
+            return disk.read(sectors_per_fat * bytes_per_sector)
+
+
+    def get_file_clusters(self, fat_table, start_cluster):
+        """
+        Lấy danh sách tất cả các cluster của file từ bảng FAT.
+        """
+        clusters = []
+        current_cluster = start_cluster
+
+        while True:
+            if current_cluster < 2 or current_cluster >= 0x0FFFFFF8:  # Kết thúc chuỗi cluster
+                break
+            if current_cluster == 0x0FFFFFF7:  # Cluster lỗi
+                print(f"❌ Lỗi: Cluster {current_cluster} bị lỗi!")
+                return None
+
+            clusters.append(current_cluster)
+            cluster_offset = current_cluster * 4
+            if cluster_offset >= len(fat_table):
+                break
+            current_cluster = int.from_bytes(fat_table[cluster_offset:cluster_offset + 4], "little") & 0x0FFFFFFF
+
+        return clusters
+
+
+    def read_clusters_data(self, device, clusters, data_offset, cluster_size, file_size):
+        """
+        Đọc dữ liệu từ tất cả các cluster.
+        """
+        file_data = bytearray()
+        with open(device, "rb") as disk:
+            for cluster in clusters:
+                cluster_offset = data_offset + (cluster - 2) * cluster_size
+                disk.seek(cluster_offset)
+                data = disk.read(cluster_size)
+                file_data.extend(data)
+
+                # Kiểm tra xem đã đọc đủ kích thước file chưa
+                if len(file_data) >= file_size:
+                    return file_data[:file_size]
+
+        return file_data[:file_size]
+
+
     def read_file_content(self, device, boot_sector, start_cluster, file_size):
         """
         Đọc nội dung của một file từ hệ thống tập tin FAT32.
-        - device: Đường dẫn đến thiết bị (ví dụ: \\.\E:)
-        - boot_sector: Dữ liệu Boot Sector
-        - start_cluster: Cluster bắt đầu của file
-        - file_size: Kích thước của file (bytes)
         """
         fat32_info = self.read_fat32_info(boot_sector)
         bytes_per_sector = fat32_info["Bytes per Sector"]
@@ -182,23 +205,13 @@ class FAT32Reader(FileSystemReader):
         data_offset = (reserved_sectors + number_of_fats * sectors_per_fat) * bytes_per_sector
         cluster_size = bytes_per_sector * sectors_per_cluster
 
-        file_data = b""
-        current_cluster = start_cluster
+        # Đọc bảng FAT
+        fat_table = self.read_fat_table(device, fat_offset, sectors_per_fat, bytes_per_sector)
 
-        while current_cluster:
-            # Tính toán offset của cluster trong vùng dữ liệu
-            cluster_offset = data_offset + (current_cluster - 2) * cluster_size
-            with open(device, "rb") as disk:
-                disk.seek(cluster_offset)
-                data = disk.read(cluster_size)
-                file_data += data
+        # Lấy danh sách cluster
+        clusters = self.get_file_clusters(fat_table, start_cluster)
+        if clusters is None:
+            return None
 
-            # Kiểm tra xem đã đọc đủ kích thước file chưa
-            if len(file_data) >= file_size:
-                return file_data[:file_size]
-
-            # Lấy cluster tiếp theo từ bảng FAT
-            current_cluster = self.get_next_cluster(device, fat_offset, current_cluster, bytes_per_sector)
-
-        return file_data
-
+        # Đọc dữ liệu từ các cluster
+        return self.read_clusters_data(device, clusters, data_offset, cluster_size, file_size)
