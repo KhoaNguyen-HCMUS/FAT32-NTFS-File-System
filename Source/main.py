@@ -154,10 +154,6 @@ class DiskExplorerApp(ctk.CTk):
                 self.current_node_stack.pop()
                 self.populate_ntfs_tree(self.current_node_stack[-1])
         
-        # Clear content viewer when navigating
-        self.content_text.config(state="normal")
-        self.content_text.delete(1.0, "end")
-        self.content_text.config(state="disabled")
 
     def select_disk(self):
         """Chọn ổ đĩa để đọc."""
