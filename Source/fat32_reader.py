@@ -80,9 +80,15 @@ class FAT32Reader(FileSystemReader):
                 
                 next_cluster = int.from_bytes(fat_entry, "little") & 0x0FFFFFFF  
 
+                if next_cluster == 0x0FFFFFF7:
+                    print(f"❌ Lỗi: Cluster {current_cluster} bị lỗi!")
+                    return None 
+
                 # Nếu cluster là giá trị EOF, không có cluster tiếp theo
                 if next_cluster >= 0x0FFFFFF8:
                     return None
+
+                
                 return next_cluster
 
         except Exception as e:
