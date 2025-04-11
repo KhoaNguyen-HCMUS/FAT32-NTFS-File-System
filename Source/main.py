@@ -238,7 +238,7 @@ class DiskExplorerApp(ctk.CTk):
         try:
             # Nếu có thư mục cha, thêm ".." vào cây
             if len(self.current_node_stack) > 1:
-                self.tree.insert("", "end", text="..", values=("Parent Folder", "", ""))
+                self.tree.insert("", "end", text="..", values=("Parent Folder", "", ""), image=self.folder_icon)
             
             for child in node["children"]:
                 if child["is_directory"]:
