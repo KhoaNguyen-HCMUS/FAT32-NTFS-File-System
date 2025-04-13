@@ -1,0 +1,118 @@
+\documentclass[a4paper, 12pt]{article}
+
+% \usepackage[portuges]{babel}
+\usepackage[utf8]{inputenc, vietnam}
+\usepackage{subfig}
+\usepackage[colorinlistoftodos]{todonotes}
+
+\usepackage[vietnamese]{babel}
+\usepackage[T5]{fontenc}
+\usepackage{indentfirst,setspace,subcaption}
+\usepackage{amsmath,amssymb,graphicx,xcolor,url}
+\usepackage{fancyhdr,tocbasic,titlesec,minted,listings}
+\usepackage[a4paper,margin=24mm]{geometry}
+\usepackage[skip=10pt plus1pt, indent=20pt]{parskip}
+\usepackage[colorlinks=true,allcolors=blue,urlcolor=magenta]{hyperref}
+
+\usepackage{graphicx}
+\usepackage{indentfirst}
+\usepackage{verbatim}
+\usepackage{textcomp}
+\usepackage{gensymb}
+\usepackage{array}
+\usepackage[normalem]{ulem}
+
+\usepackage{relsize}
+
+\usepackage{lipsum}% http://ctan.org/pkg/lipsum
+\usepackage{xcolor}% http://ctan.org/pkg/xcolor
+\usepackage{xparse}% http://ctan.org/pkg/xparse
+\NewDocumentCommand{\myrule}{O{1pt} O{2pt} O{black}}{%
+  \par\nobreak % don't break a page here
+  \kern\the\prevdepth % don't take into account the depth of the preceding line
+  \kern#2 % space before the rule
+  {\color{#3}\hrule height #1 width\hsize} % the rule
+  \kern#2 % space after the rule
+  \nointerlineskip % no additional space after the rule
+}
+\usepackage[section]{placeins}
+
+\usepackage{booktabs}
+\usepackage{colortbl}%
+   \newcommand{\myrowcolour}{\rowcolor[gray]{0.925}}
+   
+
+% \pagestyle{fancy}
+% \setlength{\headheight}{15pt}
+% \fancyhf{}
+% \fancyhead[R]{\nouppercase\rightmark\hfill~Socket Report}
+% \fancyfoot[C]{\hfill\thepage\hfill}
+
+\DeclareTOCStyleEntry[
+  indent=12pt,
+  level=1
+]{largetocline}{section}
+
+\setlength {\marginparwidth }{2cm} 
+\begin{document}
+\begin{titlepage}
+  \begin{center}
+    \textbf{\LARGE ĐẠI HỌC QUỐC GIA}\\
+    \textbf{\LARGE THÀNH PHỐ HỒ CHÍ MINH}\\[0.5cm]
+    \vspace{20pt}
+    \textbf{\large TRƯỜNG ĐẠI HỌC KHOA HỌC TỰ NHIÊN}\\[0.2cm]
+    \textbf{\large KHOA CÔNG NGHỆ THÔNG TIN}\\[0.2cm]
+    \vspace{20pt}
+    \includegraphics[width=0.5\textwidth,keepaspectratio]{images/logo.png}
+
+    \par
+    \vspace{20pt}
+    \textbf{\Large CSC10007 - Hệ điều hành}\\
+    \vspace{15pt}
+    \myrule[1pt][7pt]
+    \textbf{\LARGE BÁO CÁO ĐỒ ÁN}\\
+    \vspace{15pt}
+    \textbf{\Large Hệ thống quản lý tập tin FAT32 - NTFS}\\
+    \vspace{10pt}
+    \myrule[1pt][7pt]
+    \vspace{25pt}
+
+    \begin{tabular}{c@{\hspace{2cm}}c}
+      \textbf{Họ tên}       & \textbf{MSSV} \\
+      Nguyễn Lê Hồ Anh Khoa & 23127211      \\
+      Hình Diễm Xuân        & 23127524      \\
+    \end{tabular}
+
+    \vspace{10pt}
+    \textbf {\large Giảng viên hướng dẫn}\\[0.2cm]
+    \large Cao Xuân Nam \\
+    \vspace{25pt}
+    \today
+
+  \end{center}
+\end{titlepage}
+
+
+\newpage
+
+\tableofcontents\thispagestyle{empty}
+
+\newpage
+\input{content/thankYou}
+\input{content/studentInformation.tex}
+\input{content/projectInformation.tex}
+\section{Cài đặt chi tiết}
+\input{content/fileSystemReader}
+\input{content/FAT32}
+\input{content/ntfs}
+\input{content/diskExplorerApp}
+\input{content/selfEvaluation.tex}
+\input{content/introduceUse}
+\input{content/Ref}
+
+
+
+\pagebreak
+
+
+\end{document}

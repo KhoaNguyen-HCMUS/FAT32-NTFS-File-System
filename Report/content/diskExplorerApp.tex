@@ -1,0 +1,76 @@
+\subsection{Lớp DiskExplorerApp}
+
+Lớp \texttt{DiskExplorerApp} kế thừa từ \texttt{ctk.CTk} (một phần mở rộng của \texttt{tkinter}) và đại diện cho toàn bộ giao diện ứng dụng duyệt đĩa. Lớp này cung cấp các thành phần giao diện và chức năng để chọn đĩa, phân tích hệ thống tập tin FAT32 hoặc NTFS, và hiển thị nội dung cây thư mục.
+
+\begin{table}[H]
+\centering
+\begin{tabular}{|p{4cm}|p{3.5cm}|p{6cm}|}
+\hline
+\textbf{Thành phần} & \textbf{Thư viện sử dụng} & \textbf{Lý do sử dụng} \\
+\hline
+\texttt{DiskExplorerApp}, các khung chính như \texttt{disk\_frame}, \texttt{main\_frame}, \texttt{info\_frame}, các nút và nhãn & \texttt{customtkinter} & Giao diện hiện đại, hỗ trợ dark mode, bo góc, dễ tùy biến hơn so với tkinter gốc \\
+\hline
+\texttt{Treeview}, \texttt{Scrollbar} & \texttt{tkinter.ttk} & Hiển thị cây thư mục phân cấp; chưa có widget tương đương trong customtkinter \\
+\hline
+\texttt{Toplevel}, \texttt{ScrolledText} & \texttt{tkinter} & Hiển thị nội dung văn bản dài với khả năng cuộn; phù hợp với file .txt \\
+\hline
+\end{tabular}
+\caption{So sánh thành phần sử dụng giữa \texttt{tkinter} và \texttt{customtkinter}}
+\end{table}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{|p{4cm}|p{3.5cm}|p{6cm}|}
+\hline
+\textbf{Thành phần / Thư viện} & \textbf{Thư viện sử dụng} & \textbf{Lý do sử dụng} \\
+\hline
+Xử lý đa luồng & \texttt{threading} & Cho phép thực hiện các tác vụ như duyệt thư mục hoặc quét file mà không làm đứng giao diện người dùng (GUI) \\
+\hline
+Tích hợp COM trên Windows & \texttt{pythoncom} & COM yêu cầu mỗi luồng phải gọi CoInitialize() trước khi tương tác với WMI. Dùng pythoncom để khởi tạo/gỡ bỏ COM đúng cách trong mỗi luồng. \\
+\hline
+Xử lý ảnh & \texttt{PIL.Image}, \texttt{ImageTk} & Đọc, resize, và hiển thị ảnh trong giao diện; \texttt{ImageTk.PhotoImage} chuyển ảnh thành định dạng tkinter có thể hiển thị được \\
+\hline
+Lấy thông tin hệ thống & \texttt{wmi} & Giao tiếp với Windows Management Instrumentation (WMI) để lấy tên những partition từ USB (Removable) \\
+\hline
+\end{tabular}
+\caption{Các thư viện hỗ trợ ngoài \texttt{tkinter} trong ứng dụng}
+\end{table}
+
+
+
+\begin{itemize}
+    \item \textbf{Thuộc tính \texttt{current\_reader}}: Một đối tượng đọc hệ thống tập tin, có thể là \texttt{FAT32Reader} hoặc \texttt{NTFSReader}, được khởi tạo sau khi phát hiện hệ thống tập tin từ đĩa.
+
+    \item \textbf{Thuộc tính \texttt{fs\_type}}: Chuỗi đại diện cho loại hệ thống tập tin được phát hiện, ví dụ ``FAT32'' hoặc ``NTFS''.
+
+    \item \textbf{Thuộc tính \texttt{current\_cluster\_stack}}: Stack (danh sách) dùng để lưu các cluster hiện tại trong quá trình điều hướng hệ thống tập tin FAT32.
+
+    \item \textbf{Thuộc tính \texttt{current\_node\_stack}}: Stack dùng để lưu các node hiện tại trong cây thư mục NTFS.
+
+    \item \textbf{Thuộc tính \texttt{ntfs\_records}}: Danh sách chứa toàn bộ MFT records đã được phân tích từ hệ thống NTFS.
+
+    \item \textbf{Thuộc tính \texttt{ntfs\_root}}: Node gốc của cây thư mục NTFS, được xây dựng từ các MFT records.
+
+    \item \textbf{Thuộc tính \texttt{folder\_icon, file\_icon, txt\_file\_icon}}: Các biểu tượng ảnh đại diện cho thư mục, tập tin chung và tập tin văn bản (.txt), được hiển thị trong cây thư mục.
+
+    \item \textbf{Giao diện người dùng}: Được chia thành ba phần chính:
+    \begin{itemize}
+        \item \texttt{disk\_frame}: Gồm combobox chọn đĩa và nút xác nhận, dùng để chọn đĩa cần phân tích.
+        \item \texttt{main\_frame}: Chứa \texttt{ttk.Treeview} dùng để hiển thị cây thư mục và các tập tin.
+        \item \texttt{info\_frame}: Hiển thị thông tin chi tiết về hệ thống tập tin hiện tại.
+    \end{itemize}
+
+    \item \textbf{Hàm \texttt{refresh\_disks}}: Làm mới danh sách các ổ đĩa, kiểm tra loại hệ thống tập tin và cập nhật giao diện hiển thị nếu người dùng thay đổi ổ đĩa.
+
+    \item \textbf{Hàm \texttt{select\_disk}}: Được gọi khi người dùng chọn đĩa và nhấn nút xác nhận. Hàm sẽ tạo đối tượng đọc hệ thống tập tin tương ứng, khởi tạo cây thư mục và cập nhật thông tin.
+
+    \item \textbf{Hàm \texttt{populate\_fat32\_tree}}: Hiển thị các thư mục và tập tin từ một cluster trong hệ thống FAT32 lên \texttt{treeview}.
+
+    \item \textbf{Hàm \texttt{populate\_ntfs\_tree}}: Hiển thị các node con của một thư mục trong cây NTFS.
+
+    \item \textbf{Hàm \texttt{navigate\_back}}: Cho phép người dùng quay lại thư mục cha (dùng stack lưu lịch sử).
+
+    \item \textbf{Hàm \texttt{on\_item\_double\_click}}: Bắt sự kiện nhấn đúp vào một item trong cây, nếu là thư mục thì điều hướng vào trong, nếu là file \texttt{.txt} thì hiển thị nội dung.
+
+    \item \textbf{Hàm \texttt{display\_file\_content}}: Hiển thị nội dung tập tin văn bản \texttt{.txt} bằng cửa sổ mới, sử dụng \texttt{ScrolledText}.
+\end{itemize}
