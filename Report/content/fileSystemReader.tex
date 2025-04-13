@@ -1,0 +1,32 @@
+\subsection{Lớp FileSystemReader}
+
+Lớp \texttt{FileSystemReader} chịu trách nhiệm đọc và phân tích dữ liệu của Boot Sector từ một thiết bị lưu trữ (partition), từ đó xác định được hệ thống tập tin hiện hành. Các hàm trong lớp được phân tích như sau:
+
+\begin{itemize}
+    \item \textbf{Hàm \_\_init\_\_}: Hàm khởi tạo mặc định của Python dùng để khởi tạo các biến thành viên của đối tượng. Cụ thể, hàm này nhận tham số \texttt{device} (đường dẫn đến thiết bị), sau đó gán giá trị này cho biến thành viên \texttt{self.device}. Tiếp theo, nó gọi hàm \texttt{read\_boot\_sector()} để đọc 512 byte đầu tiên của thiết bị, gán kết quả cho biến \texttt{self.boot\_sector}.
+    
+    \item \textbf{Hàm read\_boot\_sector}: Chức năng chính của hàm này là đọc 512 byte đầu tiên của thiết bị lưu trữ, thường là Boot Sector. Trong hàm:
+    \begin{itemize}
+        \item Sử dụng câu lệnh \texttt{with open(self.device, "rb") as disk} để mở thiết bị ở chế độ đọc nhị phân.
+        \item Đọc 512 byte đầu tiên bằng hàm \texttt{disk.read(512)}.
+        \item Bao gồm các khối ngoại lệ để xử lý các lỗi tiềm ẩn:
+        \begin{itemize}
+            \item \texttt{PermissionError}: Nếu không đủ quyền truy cập, in ra thông báo lỗi và thoát chương trình.
+            \item \texttt{FileNotFoundError}: Nếu thiết bị không tồn tại hoặc không thể truy cập, in ra thông báo lỗi và thoát chương trình.
+        \end{itemize}
+    \end{itemize}
+
+    \item \textbf{Hàm detect\_filesystem}: Hàm này xác định loại hệ thống tập tin của thiết bị (FAT32 hoặc NTFS) bằng cách phân tích các byte ký hiệu nằm trong Boot Sector:
+    \begin{itemize}
+        \item Đầu tiên, tạo chuỗi ký tự từ 8 byte bắt đầu tại offset \texttt{0x52} để kiểm tra ký hiệu FAT32.
+        \item Tiếp theo, tạo chuỗi ký tự từ 8 byte bắt đầu tại offset \texttt{0x03} để kiểm tra ký hiệu NTFS.
+        \item Dựa trên việc chuỗi ký hiệu chứa từ khóa "FAT32" hoặc "NTFS", hàm trả về kiểu hệ thống tương ứng. Nếu không thuộc 2 loại trên, trả về "UNKNOWN".
+    \end{itemize}
+
+    \item \textbf{Hàm read\_little\_endian}: Hàm này chuyển đổi một dãy byte sang số nguyên theo định dạng Little Endian:
+    \begin{itemize}
+        \item Hàm nhận tham số gồm \texttt{data} (dữ liệu dạng byte array), \texttt{offset} (vị trí bắt đầu đọc), và \texttt{length} (số byte cần đọc).
+        \item Sử dụng vòng lặp từ 0 đến \texttt{length - 1}, mỗi byte được dịch chuyển bit phù hợp (theo thứ tự little endian) và cộng dồn vào biến \texttt{value}.
+        \item Sau khi xử lý xong, hàm trả về giá trị số nguyên kết quả.
+    \end{itemize}
+\end{itemize}

@@ -1,0 +1,61 @@
+\subsection{Lớp NTFSReader}
+
+Lớp \texttt{NTFSReader} kế thừa từ lớp \texttt{FileSystemReader} và mở rộng khả năng xử lý hệ thống tập tin NTFS thông qua việc phân tích Boot Sector và MFT record. Các hàm của lớp được phân tích như sau:
+
+\begin{itemize}
+    \item \textbf{Hàm \_\_init\_\_:} Gọi hàm khởi tạo của lớp cơ sở (\texttt{FileSystemReader}) để đọc Boot Sector từ thiết bị. 
+    \item \textbf{Hàm get\_signed\_byte:} Chuyển đổi giá trị của một byte không dấu sang dạng có dấu, hỗ trợ xử lý kích thước MFT record.
+    \item \textbf{Hàm read\_ntfs\_info (static):} Phân tích Boot Sector của NTFS và trích xuất các thông tin quan trọng gồm:
+    \begin{itemize}
+        \item Bytes per Sector (offset 0x0B, 2 bytes)
+        \item Sectors per Cluster (offset 0x0D, 1 byte)
+        \item Total Sectors (offset 0x28, 8 bytes)
+        \item MFT Cluster Number (offset 0x30, 8 bytes)
+        \item MFT Record Size (offset 0x40, 1 byte; xử lý giá trị có dấu)
+        \item Volume Serial Number (offset 0x50, 8 bytes)
+    \end{itemize}
+    \item \textbf{Hàm parse\_ntfs\_timestamp:} Chuyển đổi NTFS timestamp, sử dụng thư viện datetime để chuyển đổi từ đơn vị 100 nanosecond(tính theo các đơn vị 100 nanosecond kể từ thời điểm 1 tháng 1 năm 1601 theo giờ UTC) thành giờ UTC+7 để người dùng dễ dàng đọc.
+    
+    \item \textbf{Hàm parse\_data\_runs:} Phân tích chuỗi byte để trích xuất các "data run" của tập tin không resident. Hàm đọc từng header để xác định số byte biểu diễn độ dài và cluster offset, sau đó sử dụng thông tin này để xác định chuỗi cluster chứa dữ liệu của tập tin.
+    
+    \item \textbf{Hàm parse\_ntfs\_mft\_record:} Phân tích MFT record để trích xuất các thông tin sau:
+    \begin{itemize}
+        \item Các byte đầu tiên (offset 0 đến 3) của record chứa chuỗi "FILE" để xác nhận đó là một MFT record hợp lệ nếu không thì đó có thể là (record chưa sử dụng/đã xóa/lỗi...).
+        \item Flags để xác định record thuộc file hay thư mục (offset 22, 2 bytes).
+         \item \textbf{Thuộc tính FILE\_NAME:} 
+    \begin{itemize}
+        \item \textbf{Header:} Mỗi thuộc tính bắt đầu với header chứa thông tin về kiểu và độ dài của thuộc tính.
+        \item \textbf{Nội dung:} Sau header, nội dung của FILE\_NAME bao gồm:
+        \begin{itemize}
+            \item \textbf{Parent Reference:} 8 byte đầu tiên thể hiện số record của thư mục chứa file.
+            \item \textbf{Thông tin tên tập tin:} Chứa độ dài (1 byte) và chuỗi tên file được mã hóa bằng UTF-16LE.
+        \end{itemize}
+    \end{itemize}
+    \item \textbf{Thuộc tính \$DATA:} Xác định thông tin về dữ liệu tập tin:
+    \begin{itemize}
+        \item \textbf{Resident:} Nếu dữ liệu đủ nhỏ, toàn bộ dữ liệu (với kích thước và vị trí được xác định trong header của thuộc tính) được lưu trực tiếp trong record.
+        \item \textbf{Non-resident:} Nếu dữ liệu lớn, không thể chứa trực tiếp, record chỉ chứa các tham chiếu dưới dạng data runs. Data runs liệt kê chuỗi các cluster trên đĩa, cùng với kích thước và offset tương đối, giúp xác định vị trí thật của dữ liệu.
+    \end{itemize}
+    \end{itemize}
+  \item \textbf{Hàm \texttt{read\_all\_mft\_records}:}  
+Đọc liên tiếp các bản ghi MFT (Master File Table) từ thiết bị lưu trữ. Cụ thể:
+\begin{itemize}
+    \item Sử dụng kết quả từ hàm \texttt{read\_ntfs\_info} để lấy thông tin: Bytes per Sector, Sectors per Cluster, vị trí MFT (tính bằng cluster), và kích thước mỗi MFT record.
+    \item Tính toán offset vật lý bắt đầu của vùng MFT trên ổ đĩa.
+    \item Đọc tuần tự từng MFT record từ thiết bị.
+    \item Mỗi bản ghi đọc được sẽ được phân tích bằng hàm \texttt{parse\_ntfs\_mft\_record} và lưu vào một dictionary với khóa là \texttt{record\_number}.
+\end{itemize}
+\item \textbf{Hàm \texttt{build\_tree}:}  
+Xây dựng cây thư mục từ danh sách các bản ghi MFT dựa trên quan hệ cha - con.
+\begin{itemize}
+    \item Mỗi record có trường \texttt{parent} chứa số hiệu record của thư mục cha.
+    \item Hàm khởi tạo trường \texttt{children} cho tất cả các record.
+    \item Duyệt qua từng record, nếu \texttt{parent} tồn tại và khác chính nó, sẽ thêm nó vào danh sách \texttt{children} của thư mục cha.
+    \item Trả về record gốc (thông thường có \texttt{record\_number = 5}) đại diện cho thư mục gốc của hệ thống tập tin.
+\end{itemize}
+    \item \textbf{Hàm read\_file\_content:} Đọc nội dung của tập tin:
+    \begin{itemize}
+        \item Nếu file là resident, trả về nội dung trực tiếp từ MFT record.
+        \item Nếu file là non-resident, sử dụng các data run để xác định và đọc dữ liệu từ các cluster được chỉ định.
+    \end{itemize}
+\end{itemize}

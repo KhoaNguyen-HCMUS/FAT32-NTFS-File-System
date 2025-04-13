@@ -1,1 +1,32 @@
 \subsection{FAT32}
+
+Lớp \texttt{fat32\_reader} chịu trách nhiệm đọc và phân tích hệ thống tập tin FAT32 từ thiết bị hoặc file ổ đĩa. Các hàm của lớp được phân tích như sau:
+
+\begin{itemize}
+\item \textbf{Hàm \_\_init\_\_}: Gọi hàm khởi tạo của lớp cơ sở (FileSystemReader) để đọc Boot Sector từ thiết bị, khởi tạo biến để lưu toàn bộ bảng FAT.
+\item \textbf{Hàm read\_fat32\_info}: Đọc thông tin từ Boot Sector nếu là FAT32.
+\item \textbf{Hàm parse\_short\_name}: giải mã tên tập tin ngắn với 8 byte đầu (offset 0-7) là tên file, 3 byte sau (offset8-10) là phần mở rộng. Trả về dạng \{tên\}.\{phần mở rộng\}, nếu không có phần mở rộng thì chỉ trả về \{tên\}. Kiểm tra tên và phần mở rộng có được ghi là chữ thường hay không (tại offset 12 chứa byte đánh dấu chữ thường), rồi chuyển đổi lại cho đúng kiểu chữ khi hiển thị.
+\item \textbf{Hàm clean\_filename}: Xóa các khoảng trống đầu cuối, bỏ cái ký tự không hợp lệ cũng như các bit trống
+
+\item \textbf{Hàm parse\_lfn}: giải mã tên tập tin dài. Khởi tạo danh sách rỗng name\_parts để lưu các phần nhỏ của tên tập tin dài từ mỗi entry phụ. Duyệt từng phần tử trong entry phụ theo thứ tự ngược vì các entry phụ LFN này được lưu theo thứ tự ngược trong bảng thư mục.Lưu tên dài bằng mã UTF-16LE, chia nhỏ ra 3 đoạn trong mỗi entry phụ:
+    \begin{itemize}
+    \item Phần 1: từ offset 1 đến 10 (10 bytes) → 5 ký tự.
+    \item Phần 2: từ offset 14 đến 25 (12 bytes) → 6 ký tự.
+    \item Phần 3: từ offset 28 đến 31 (4 bytes) → 2 ký tự.
+    \end{itemize} 
+Ghép 3 phần lại rồi lưu vào name\_part, sau đó nối các chuỗi trong name\_part lại rồi lưu vào full\_name.
+\item \textbf { Hàm parse\_date}: giải mã ngày, tháng, năm. Trả về chuỗi dưới dạng: YYYY-MM-DD. Raw\_date có độ dài 16 bit (offset 16-17) trong đó (bit đọc từ phải sang trái): bit 0-4 biểu diễn ngày, bit 5-8 biểu diễn , bit 9-15 biểu diễn .
+   
+\item \textbf{Hàm parse\_time}: giải mã thời gian. Trả về chuỗi dưới dạng: HH-MM-SS. Raw\_time có độ dài 16 bit (offset 14-15) trong đó (bit đọc từ phải sang trái): bit 0-4 biểu diễn giây, bit 5-10 biểu diễn phút, bit 11-15 biểu diễn giờ.
+
+\item \textbf{Hàm read\_directory}: đọc toàn bộ nội dung của một thư mục, bắt đầu từ một cluster đầu. Nó phân tích các entry trong thư mục để lấy thông tin tên (bao gồm cả tên dài), loại (file/thư mục), cluster bắt đầu, kích thước, ngày và giờ tạo. Hàm duyệt qua toàn bộ các cluster liên kết với thư mục đó bằng cách tra bảng FAT, và trả về danh sách các mục đã phân tích.
+
+\item \textbf{Hàm load\_fat\_table}: đọc toàn bộ bảng FAT từ ổ đĩa, bắt đầu từ vị trí fat\_offset đọc đến hết kích thước của bảng.
+
+\item \textbf{Hàm get\_file\_clusters}: có nhiệm vụ dựa vào bảng FAT và cluster bắt đầu để lấy danh sách tất cả các cluster của file. Duyệt qua từng cluster cho đến khi gặp cluster kết thúc (0, 1, 0x0FFFFFF8) hoặc lỗi (x0FFFFFF7), nếu cluster hợp lệ thì ta thêm vào danh sách, sau đó tính vị trí của cluster xem có bị vượt quá kích thước của bảng FAT  hay không, nếu hợp lệ thì lấy cluster tiếp theo để tính.
+
+\item \textbf{Hàm read\_clusters\_data}: Đọc dữ liệu từ nhiều cluster đã biết và trả về nội dung đầy đủ của một file trong hệ thống tập tin FAT32. Đầu tiên hàm sẽ tạo biến file\_data để chứa dữ liệu của tập tin, mở ổ đĩa để đọc dưới dạng binary, duyệt qua từng cluster để tính toán offset để đọc đúng nội dung, kích thước, sau đó đọc rồi nối nội dung vào file\_data. Sau khi đọc hết tất cả cluster, cắt đúng file\_size và trả về.
+
+\item \textbf{Hàm read\_file\_content}: Có nhiệm vụ đọc nội dung tập tin. Nó phân tích Boot Sector để tính toán các thông số cần thiết, sau đó tải bảng FAT, truy vết các cluster chứa dữ liệu của tập tin và cuối cùng đọc dữ liệu từ các cluster đó rồi trả về nội dung tập tin.
+
+\end{itemize}
